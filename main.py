@@ -5,8 +5,7 @@ from dotenv import load_dotenv
 import os
 
 import asyncio
-
-import sqlite3
+from problems import Problem
 
 load_dotenv()
 token = os.getenv("DISCORD_TOKEN")
@@ -40,22 +39,12 @@ async def repeat(ctx, *, arg):
 @bot.command()
 @commands.check(in_channel)
 async def problem(ctx, contest, year, question_number):
-    conn = sqlite3.connect("math_problems.db")
+    question = Problem.fetch_problem(contest, year, question_number)
 
-    c = conn.cursor()
+    statement = Problem.fetch_problem_statement(question)
+    answer = Problem.fetch_problem_answer(question)
 
-    c.execute("SELECT * FROM math_problems"
-              " WHERE contest=? AND year=? AND question_number=?", (contest, year, question_number))
-
-    question = c.fetchone()
-    print(question)
-
-    question_statement = question[3]
-    answer = question[4]
-    print(question_statement)
-    print(answer)
-
-    await ctx.send(question_statement)
+    await ctx.send(statement)
 
     def check(message):
         return message.author == ctx.author and message.channel == ctx.channel
