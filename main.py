@@ -4,8 +4,9 @@ import logging
 from dotenv import load_dotenv
 import os
 
-import random
 import asyncio
+
+import sqlite3
 
 load_dotenv()
 token = os.getenv("DISCORD_TOKEN")
@@ -16,13 +17,14 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-channel_id = int(os.getenv("CHANNEL_ID")) # josh's channel for testing
+channel_id = int(os.getenv("CHANNEL_ID"))
+
 def in_channel(ctx):
     return ctx.channel.id == channel_id
 
 @bot.event
 async def on_ready():
-    channel = bot.get_channel(1543691422811824322)
+    channel = bot.get_channel(channel_id)
     await channel.send("I'm ready!")
 
 @bot.command()
@@ -37,28 +39,31 @@ async def repeat(ctx, *, arg):
 
 @bot.command()
 @commands.check(in_channel)
-async def problem(ctx):
-    operations = ("+", "-", "*")
-    num1 = random.randint(1, 10)
-    num2 = random.randint(1, 10)
-    operation = random.choice(operations)
+async def problem(ctx, contest, year, question_number):
+    conn = sqlite3.connect("math_problems.db")
 
-    if operation == "+":
-        answer = num1 + num2
-    elif operation == "-":
-        answer = num1 - num2
-    else:
-        answer = num1 * num2
+    c = conn.cursor()
 
-    await ctx.send(f"What is {num1} {operation} {num2}?")
+    c.execute("SELECT * FROM math_problems"
+              " WHERE contest=? AND year=? AND question_number=?", (contest, year, question_number))
+
+    question = c.fetchone()
+    print(question)
+
+    question_statement = question[3]
+    answer = question[4]
+    print(question_statement)
+    print(answer)
+
+    await ctx.send(question_statement)
 
     def check(message):
         return message.author == ctx.author and message.channel == ctx.channel
 
     try:
-        response = await bot.wait_for("message", timeout=30.0, check=check)
+        response = await bot.wait_for("message", timeout=5.0, check=check)
     except asyncio.TimeoutError:
-        await ctx.send("Ran out of time!")
+        await ctx.send(f"Ran out of time! The answer was {answer}")
     else:
         if response.content == str(answer):
             await ctx.send("Correct!")
