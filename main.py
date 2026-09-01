@@ -11,12 +11,12 @@ load_dotenv()
 token = os.getenv("DISCORD_TOKEN")
 
 handler = logging.FileHandler(filename='discord.log', encoding='utf-8', mode='w')
-intents =discord.Intents.default()
+intents = discord.Intents.default()
 intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-channel_id = os.getenv("CHANNEL_ID") # josh's channel for testing
+channel_id = int(os.getenv("CHANNEL_ID")) # josh's channel for testing
 def in_channel(ctx):
     return ctx.channel.id == channel_id
 
