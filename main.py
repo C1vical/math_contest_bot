@@ -15,7 +15,8 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
-    print("running")
+    channel = bot.get_channel(1543691422811824322)
+    await channel.send("I'm ready!")
 
 @bot.command()
 async def hi(ctx):
