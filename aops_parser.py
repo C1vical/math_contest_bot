@@ -30,11 +30,11 @@ def latexify(raw_content: str) -> str:
     text = raw_content
 
     # Extract raw source inside <textarea> if passing full HTML edit page
-    textarea_match = re.search(
-        r"<textarea[^>]*>(.*?)</textarea>", text, re.DOTALL | re.IGNORECASE
-    )
-    if textarea_match:
-        text = textarea_match.group(1)
+    # textarea_match = re.search(
+    #     r"<textarea[^>]*>(.*?)</textarea>", text, re.DOTALL | re.IGNORECASE
+    # )
+    # if textarea_match:
+    #     text = textarea_match.group(1)
 
     # Decode HTML entities and dash variants
     text = html.unescape(text)
@@ -226,61 +226,41 @@ def latexify(raw_content: str) -> str:
 
     return text.strip()
 
-def fetch_aops_page(page_title: str, max_redirects: int = 5) -> str:
-    """Fetches raw wikitext directly from the AoPS MediaWiki API,
-
-    automatically following page redirects if encountered.
-    """
+def fetch_aops_page(page_title: str) -> str:
     url = "https://artofproblemsolving.com/wiki/api.php"
     scraper = cloudscraper.create_scraper()
 
-    current_title = page_title
+    params = {
+        "action": "query",
+        "prop": "revisions",
+        "rvprop": "content",
+        "rvslots": "main", # prevent warnings
+        "format": "json",
+        "titles": page_title,
+        "redirects": "",  # automatically resolve redirects
+    }
 
-    for _ in range(max_redirects):
-        params = {
-            "action": "query",
-            "prop": "revisions",
-            "rvprop": "content",
-            "format": "json",
-            "titles": current_title,
-            "redirects": 1,  # MediaWiki API automatically resolves standard redirects
-        }
+    response = scraper.get(url=url, params=params)
+    response.raise_for_status()
 
-        response = scraper.get(url=url, params=params)
-        response.raise_for_status()
+    data = response.json()
+    pages = data.get("query", {}).get("pages", {})
 
-        data = response.json()
-        pages = data.get("query", {}).get("pages", {})
+    content = ""
+    for page_id, page_info in pages.items():
+        if page_id == "-1":
+            raise ValueError(
+                f"Page '{page_title}' does not exist on AoPS Wiki."
+            )
+        revisions = page_info.get("revisions", [])
+        if revisions:
+            content = revisions[0].get("slots", {}).get("main", {}).get("*", "")
 
-        content = ""
-        for page_id, page_info in pages.items():
-            if page_id == "-1":
-                raise ValueError(
-                    f"Page '{current_title}' does not exist on AoPS Wiki."
-                )
-            content = page_info["revisions"][0]["*"]
-
-        # Manual fallback check for unbracketed or leftover #redirect syntax
-        redirect_match = re.match(
-            r"#redirect\s*:?\s*\[?\[?([^\]\n]+)\]?\]?",
-            content.strip(),
-            re.IGNORECASE,
-        )
-
-        if redirect_match:
-            # Extract the redirected page title and fetch again
-            current_title = redirect_match.group(1).strip()
-            print(f"Redirecting to: {current_title}")
-        else:
-            return content
-
-    raise RuntimeError(
-        f"Too many redirects encountered while fetching '{page_title}'."
-    )
+    return content
 
 # --- Test Execution ---
 if __name__ == "__main__":
-    sample_page = "2009_AMC_10A_Problems/Problem_25"
+    sample_page = "2025_AMC_10A_Problems/Problem_1"
 
     print("Fetching raw page...")
     raw_wikitext = fetch_aops_page(sample_page)
