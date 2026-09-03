@@ -217,19 +217,15 @@ def fetch_aops_page(page_title: str) -> str:
 
     return content
 
-# --- Test Execution ---
-if __name__ == "__main__":
-    sample_page = "2025_AMC_10A_Problems"
+def fetch_aops_problem(year: int, contest: str, edition: str, problem_number: int) -> str:
+    page = f"{year}_{contest}_{edition}_Problems"
 
     print("Fetching raw page...")
-    raw_wikitext = fetch_aops_page(sample_page)
-    # print(raw_wikitext)
+    raw_wikitext = fetch_aops_page(page)
 
-    # 1. Extract problem + options section only
-    problems = extract_problems(raw_wikitext)
+    problem = extract_problems(raw_wikitext)[problem_number - 1]
 
-    # 2. Convert to clean LaTeX syntax
-    problems = [latexify(problem) for problem in problems]
+    return latexify(problem)
 
-    print("--- PARSED LATEX OUTPUT ---")
-    print(problems)
+if __name__ == "__main__":
+    print(fetch_aops_problem(2025, "AMC", "10A", 1))

@@ -5,7 +5,8 @@ from dotenv import load_dotenv
 import os
 
 import asyncio
-from problems import Problem
+
+from database import get_problem, get_problem_answer, get_problem_statement
 
 load_dotenv()
 token = os.getenv("DISCORD_TOKEN")
@@ -38,13 +39,13 @@ async def repeat(ctx, *, arg):
 
 @bot.command()
 @commands.check(in_channel)
-async def problem(ctx, contest, year, question_number):
-    question = Problem.fetch_problem(contest, year, question_number)
+async def gimme(ctx, year, contest, edition, question_number):
+    question = get_problem(int(year), contest, edition, int(question_number))
 
-    statement = Problem.fetch_problem_statement(question)
-    answer = Problem.fetch_problem_answer(question)
+    statement = get_problem_statement(question)
+    answer = get_problem_answer(question)
 
-    await ctx.send(statement)
+    await ctx.send(f"```latex\n{statement}\n```")
 
     def check(message):
         return message.author == ctx.author and message.channel == ctx.channel
@@ -59,5 +60,5 @@ async def problem(ctx, contest, year, question_number):
         else:
             await ctx.send(f"Incorrect! The answer was {answer}")
 
-
-bot.run(token, log_handler=handler, log_level=logging.DEBUG)
+if __name__ == "__main__":
+    bot.run(token, log_handler=handler, log_level=logging.DEBUG)
