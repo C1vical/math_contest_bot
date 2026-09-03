@@ -2,27 +2,14 @@ import html
 import re
 import cloudscraper
 
-def extract_problem_statement(raw_wikitext: str) -> str:
-    """Extracts only the problem statement section from raw wikitext,
+def extract_problems(raw_wikitext: str) -> list:
+    text = raw_wikitext
+    text = re.sub(r"\{\{.*?}}", "", text)
+    text = re.sub(r"==see also==.*", "", text, flags=re.DOTALL|re.IGNORECASE)
 
-    ignoring solutions, video links, templates, and see-also sections.
-    """
-    # Match content from '==Problem==' up to the next '==' section header
-    pattern = r"==\s*Problem\s*==\s*(.*?)(?=\n==|\Z)"
-    match = re.search(pattern, raw_wikitext, re.DOTALL | re.IGNORECASE)
+    parts = re.split(r"\[\[.*?Solution]]", text)
 
-    if match:
-        problem_text = match.group(1)
-    else:
-        # Fallback: if no explicit ==Problem== header exists, take everything before the first section header
-        problem_text = re.split(
-            r"\n==\s*Solution", raw_wikitext, flags=re.IGNORECASE
-        )[0]
-
-    # Remove any MediaWiki template tags like {{AMC10 box...}} or {{MAA Notice}}
-    problem_text = re.sub(r"\{\{[^}]*\}\}", "", problem_text)
-
-    return problem_text.strip()
+    return [p.strip() for p in parts]
 
 
 def latexify(raw_content: str) -> str:
@@ -200,30 +187,6 @@ def latexify(raw_content: str) -> str:
     text = re.sub(r"\[\[[^]|]+\|([^]]+)\]\]", lambda m: m.group(1), text)
     text = re.sub(r"\[\[([^]|]+)\]\]", lambda m: m.group(1), text)
 
-    # Lists (BBCode [list], [*] and HTML <ol>, <ul>, <li>)
-    text = re.sub(
-        r"\[list\]", lambda _: " \\begin{itemize} ", text, flags=re.IGNORECASE
-    )
-    text = re.sub(
-        r"\[/list\]", lambda _: " \\end{itemize} ", text, flags=re.IGNORECASE
-    )
-    text = re.sub(r"\[\*\]", lambda _: r"\item ", text)
-
-    text = re.sub(
-        r"<ol>", lambda _: " \\begin{enumerate} ", text, flags=re.IGNORECASE
-    )
-    text = re.sub(
-        r"</ol>", lambda _: " \\end{enumerate} ", text, flags=re.IGNORECASE
-    )
-    text = re.sub(
-        r"<ul>", lambda _: " \\begin{itemize} ", text, flags=re.IGNORECASE
-    )
-    text = re.sub(
-        r"</ul>", lambda _: " \\end{itemize} ", text, flags=re.IGNORECASE
-    )
-    text = re.sub(r"<li>", lambda _: r"\item ", text, flags=re.IGNORECASE)
-    text = re.sub(r"</li>", "", text, flags=re.IGNORECASE)
-
     return text.strip()
 
 def fetch_aops_page(page_title: str) -> str:
@@ -260,16 +223,20 @@ def fetch_aops_page(page_title: str) -> str:
 
 # --- Test Execution ---
 if __name__ == "__main__":
-    sample_page = "2025_AMC_10A_Problems/Problem_1"
+    sample_page = "2025_AMC_10A_Problems"
 
     print("Fetching raw page...")
     raw_wikitext = fetch_aops_page(sample_page)
+    # print(raw_wikitext)
 
     # 1. Extract problem + options section only
-    problem_only_wikitext = extract_problem_statement(raw_wikitext)
+    problems = extract_problems(raw_wikitext)
+
+    # for problem in problems:
+    #     print(problem)
 
     # 2. Convert to clean LaTeX syntax
-    parsed_latex = latexify(problem_only_wikitext)
+    # parsed_latex = latexify(problem_only_wikitext)
 
-    print("--- PARSED LATEX OUTPUT ---")
-    print(parsed_latex)
+    # print("--- PARSED LATEX OUTPUT ---")
+    # # print(parsed_latex)
