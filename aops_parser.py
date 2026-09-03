@@ -5,23 +5,17 @@ import cloudscraper
 def extract_problems(raw_wikitext: str) -> list:
     text = raw_wikitext
     text = re.sub(r"\{\{.*?}}", "", text)
-    text = re.sub(r"==see also==.*", "", text, flags=re.DOTALL|re.IGNORECASE)
+    text = re.sub(r"==\s*see\s*also\s*==.*", "", text, flags=re.DOTALL|re.IGNORECASE)
+    text = re.sub(r"==\s*Problem.*?==", "", text, flags=re.IGNORECASE)
 
     parts = re.split(r"\[\[.*?Solution]]", text)
 
     return [p.strip() for p in parts]
 
 
+# will refactor in the future
 def latexify(raw_content: str) -> str:
-    """Converts raw AoPS wikitext, BBCodes, and HTML into clean LaTeX syntax."""
     text = raw_content
-
-    # Extract raw source inside <textarea> if passing full HTML edit page
-    # textarea_match = re.search(
-    #     r"<textarea[^>]*>(.*?)</textarea>", text, re.DOTALL | re.IGNORECASE
-    # )
-    # if textarea_match:
-    #     text = textarea_match.group(1)
 
     # Decode HTML entities and dash variants
     text = html.unescape(text)
@@ -49,6 +43,8 @@ def latexify(raw_content: str) -> str:
     asy_end = "\n\\end{asy}\n\\end{minipage}\n\n"
     text = re.sub(r"<asy>", lambda _: asy_start, text, flags=re.IGNORECASE)
     text = re.sub(r"</asy>", lambda _: asy_end, text, flags=re.IGNORECASE)
+
+    # text = re.sub(r"import\s*.*", "", text, flags=re.IGNORECASE) # remove imports in asymptote
 
     def clean_asy(match):
         lines = [line for line in match.group(0).splitlines() if line.strip()]
@@ -232,11 +228,8 @@ if __name__ == "__main__":
     # 1. Extract problem + options section only
     problems = extract_problems(raw_wikitext)
 
-    # for problem in problems:
-    #     print(problem)
-
     # 2. Convert to clean LaTeX syntax
-    # parsed_latex = latexify(problem_only_wikitext)
+    problems = [latexify(problem) for problem in problems]
 
-    # print("--- PARSED LATEX OUTPUT ---")
-    # # print(parsed_latex)
+    print("--- PARSED LATEX OUTPUT ---")
+    print(problems)
