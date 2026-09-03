@@ -217,15 +217,18 @@ def fetch_aops_page(page_title: str) -> str:
 
     return content
 
-def fetch_aops_problem(year: int, contest: str, edition: str, problem_number: int) -> str:
+def fetch_aops_problem_set(year: int, contest: str, edition: str) -> list:
     page = f"{year}_{contest}_{edition}_Problems"
 
-    print("Fetching raw page...")
     raw_wikitext = fetch_aops_page(page)
 
-    problem = extract_problems(raw_wikitext)[problem_number - 1]
+    problems = extract_problems(raw_wikitext)
 
-    return latexify(problem)
+    print(f"Fetched {len(problems)} problems from AoPS Wiki for {year} {contest} {edition}.")
+    return [latexify(problem) for problem in problems]
 
 if __name__ == "__main__":
-    print(fetch_aops_problem(2025, "AMC", "10A", 1))
+    problem_set = fetch_aops_problem_set(2025, "AMC", "10A")
+    for problem in problem_set:
+        print(problem)
+        print("\n---\n")
