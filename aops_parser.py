@@ -24,7 +24,6 @@ def extract_problem_statement(raw_wikitext: str) -> str:
 
     return problem_text.strip()
 
-
 def latexify(raw_content: str) -> str:
     """Converts raw AoPS wikitext, BBCodes, and HTML into clean LaTeX syntax."""
     text = raw_content
@@ -226,7 +225,7 @@ def latexify(raw_content: str) -> str:
 
     return text.strip()
 
-def fetch_aops_page(page_title: str, max_redirects: int = 5) -> str:
+def fetch_aops_page(page_title: str) -> str:
     """Fetches raw wikitext directly from the AoPS MediaWiki API,
 
     automatically following page redirects if encountered.
@@ -234,56 +233,35 @@ def fetch_aops_page(page_title: str, max_redirects: int = 5) -> str:
     url = "https://artofproblemsolving.com/wiki/api.php"
     scraper = cloudscraper.create_scraper()
 
-    current_title = page_title
+    params = {
+        "action": "query",
+        "prop": "revisions",
+        "rvprop": "content",
+        "format": "json",
+        "titles": page_title,
+        "redirects": 1,  # MediaWiki API automatically resolves standard redirects
+    }
 
-    for _ in range(max_redirects):
-        params = {
-            "action": "query",
-            "prop": "revisions",
-            "rvprop": "content",
-            "format": "json",
-            "titles": current_title,
-            "redirects": 1,  # MediaWiki API automatically resolves standard redirects
-        }
+    response = scraper.get(url=url, params=params)
+    response.raise_for_status()
 
-        response = scraper.get(url=url, params=params)
-        response.raise_for_status()
+    data = response.json()
+    pages = data.get("query", {}).get("pages", {})
 
-        data = response.json()
-        pages = data.get("query", {}).get("pages", {})
+    content = ""
+    for page_id, page_info in pages.items():
+        if page_id == "-1":
+            raise ValueError(
+                f"Page '{page_title}' does not exist on AoPS Wiki."
+            )
+        content = page_info["revisions"][0]["*"]
 
-        content = ""
-        for page_id, page_info in pages.items():
-            if page_id == "-1":
-                raise ValueError(
-                    f"Page '{current_title}' does not exist on AoPS Wiki."
-                )
-            content = page_info["revisions"][0]["*"]
+    return content
 
-        # Manual fallback check for unbracketed or leftover #redirect syntax
-        redirect_match = re.match(
-            r"#redirect\s*:?\s*\[?\[?([^\]\n]+)\]?\]?",
-            content.strip(),
-            re.IGNORECASE,
-        )
+def fetch_aops_problem(year: int, contest: str, edition: str, problem_number: int) -> str:
+    page = f"{year}_{contest}_{edition}_Problems/Problem_{problem_number}"
 
-        if redirect_match:
-            # Extract the redirected page title and fetch again
-            current_title = redirect_match.group(1).strip()
-            print(f"Redirecting to: {current_title}")
-        else:
-            return content
-
-    raise RuntimeError(
-        f"Too many redirects encountered while fetching '{page_title}'."
-    )
-
-# --- Test Execution ---
-if __name__ == "__main__":
-    sample_page = "2009_AMC_10A_Problems/Problem_25"
-
-    print("Fetching raw page...")
-    raw_wikitext = fetch_aops_page(sample_page)
+    raw_wikitext = fetch_aops_page(page)
 
     # 1. Extract problem + options section only
     problem_only_wikitext = extract_problem_statement(raw_wikitext)
@@ -291,5 +269,8 @@ if __name__ == "__main__":
     # 2. Convert to clean LaTeX syntax
     parsed_latex = latexify(problem_only_wikitext)
 
-    print("--- PARSED LATEX OUTPUT ---")
-    print(parsed_latex)
+    # 3. Return Latexified problem statement
+    return parsed_latex
+
+if __name__ == "__main__":
+    print(fetch_aops_problem(2025, "AMC", "10A", 1))
