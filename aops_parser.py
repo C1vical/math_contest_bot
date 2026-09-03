@@ -29,11 +29,11 @@ def latexify(raw_content: str) -> str:
     text = raw_content
 
     # Extract raw source inside <textarea> if passing full HTML edit page
-    textarea_match = re.search(
-        r"<textarea[^>]*>(.*?)</textarea>", text, re.DOTALL | re.IGNORECASE
-    )
-    if textarea_match:
-        text = textarea_match.group(1)
+    # textarea_match = re.search(
+    #     r"<textarea[^>]*>(.*?)</textarea>", text, re.DOTALL | re.IGNORECASE
+    # )
+    # if textarea_match:
+    #     text = textarea_match.group(1)
 
     # Decode HTML entities and dash variants
     text = html.unescape(text)
@@ -226,10 +226,6 @@ def latexify(raw_content: str) -> str:
     return text.strip()
 
 def fetch_aops_page(page_title: str) -> str:
-    """Fetches raw wikitext directly from the AoPS MediaWiki API,
-
-    automatically following page redirects if encountered.
-    """
     url = "https://artofproblemsolving.com/wiki/api.php"
     scraper = cloudscraper.create_scraper()
 
@@ -237,9 +233,10 @@ def fetch_aops_page(page_title: str) -> str:
         "action": "query",
         "prop": "revisions",
         "rvprop": "content",
+        "rvslots": "main", # prevent warnings
         "format": "json",
         "titles": page_title,
-        "redirects": 1,  # MediaWiki API automatically resolves standard redirects
+        "redirects": "",  # automatically resolve redirects
     }
 
     response = scraper.get(url=url, params=params)
@@ -254,7 +251,9 @@ def fetch_aops_page(page_title: str) -> str:
             raise ValueError(
                 f"Page '{page_title}' does not exist on AoPS Wiki."
             )
-        content = page_info["revisions"][0]["*"]
+        revisions = page_info.get("revisions", [])
+        if revisions:
+            content = revisions[0].get("slots", {}).get("main", {}).get("*", "")
 
     return content
 
