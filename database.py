@@ -104,4 +104,4 @@ def load_all_problems():
 if __name__ == "__main__":
     create_database()
 
-    load_contest_problems(2025, "AMC10A")
+    load_contest_problems(2004, "AMC12B")

@@ -2,7 +2,8 @@ import re
 import cloudscraper
 from curl_cffi import requests
 from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright
+import asyncio
+from playwright.async_api import async_playwright
 import sqlite3
 
 def extract_latex(alt: str):
@@ -319,32 +320,37 @@ def fetch_all_problems(year: int, wiki_name: str) -> list:
 
     return problems
 
-def render_problems():
-    with sqlite3.connect("math_problems.db") as conn:
-        rows = conn.execute("SELECT question_statement, image_path, id FROM math_problems WHERE rendered = 0").fetchall()
+async def render_problem(semaphore, context, html: str, output_path: str, id: int):
+    async with semaphore:
+        page = await context.new_page()
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page(viewport={"width": 900,"height": 800}, device_scale_factor=2)
+        document = create_html_document(html)
 
-        for row in rows:
-            html = row[0]
-            path = row[1]
+        await page.set_content(document)
 
-            document = create_html_document(html)
+        await page.locator("body").screenshot(path=output_path)
 
-            page.set_content(document)
+        await page.close()
 
-            body_element = page.locator("body")
-            body_element.screenshot(path=path)
+        with sqlite3.connect("math_problems.db") as conn:
+            conn.execute("UPDATE math_problems SET rendered = 1 WHERE id = ?", (id,))
+        print(f"Successfully rendered problem id: {id}!")
 
-            # set rendered to 1
-            with sqlite3.connect("math_problems.db") as conn:
-                id = row[2]
-                conn.execute("UPDATE math_problems SET rendered = 1 WHERE id = ?", (id,)).fetchall()
+async def render_problems():
+    print("Starting...")
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context(viewport={"width": 900, "height": 800}, device_scale_factor=2)
+        semaphore = asyncio.Semaphore(4)
 
-        browser.close()
+        with sqlite3.connect("math_problems.db") as conn:
+            rows = conn.execute("SELECT question_statement, image_path, id FROM math_problems WHERE rendered = 0").fetchall()
+
+        tasks = [render_problem(semaphore, context, html=row[0], output_path=row[1], id=row[2]) for row in rows]
+        await asyncio.gather(*tasks)
+
+        await browser.close()
+        print("Done!")
 
 if __name__ == "__main__":
-    render_problems()
-    print(f"Done!")
+    asyncio.run(render_problems())
