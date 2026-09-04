@@ -1,234 +1,321 @@
-import html
-import re
+import asyncio
+
 import cloudscraper
-
-def extract_problems(raw_wikitext: str) -> list:
-    text = raw_wikitext
-    text = re.sub(r"\{\{.*?}}", "", text)
-    text = re.sub(r"==\s*see\s*also\s*==.*", "", text, flags=re.DOTALL|re.IGNORECASE)
-    text = re.sub(r"==\s*Problem.*?==", "", text, flags=re.IGNORECASE)
-
-    parts = re.split(r"\[\[.*?Solution]]", text)
-
-    return [p.strip() for p in parts]
+from bs4 import BeautifulSoup
+from playwright.async_api import async_playwright
 
 
-# will refactor in the future
-def latexify(raw_content: str) -> str:
-    text = raw_content
+# ============================================================
+# Extract LaTeX
+# ============================================================
 
-    # Decode HTML entities and dash variants
-    text = html.unescape(text)
-    text = text.replace("&ndash;", "--").replace("&mdash;", "---")
-    text = re.sub(r"<!--[^>]*-->", "", text)
-    text = re.sub(r"</?onlyinclude>", "", text, flags=re.IGNORECASE)
+def extract_latex(alt: str):
+    alt = alt.strip()
 
-    # --- MATH TAG CONVERSIONS ---
-    # Convert <imath> and <math> tags to inline LaTeX delimiters ($...$)
-    text = re.sub(r"</?(imath|math)>", "$", text, flags=re.IGNORECASE)
+    if alt.startswith("$$") and alt.endswith("$$"):
+        return alt[2:-2]
 
-    # Convert <cmath> tags to display LaTeX delimiters (\[...\])
-    text = re.sub(r"<cmath>", lambda _: r"\[ ", text, flags=re.IGNORECASE)
-    text = re.sub(r"</cmath>", lambda _: r" \]", text, flags=re.IGNORECASE)
+    if alt.startswith("$") and alt.endswith("$"):
+        return alt[1:-1]
 
-    # Math symbols & character escapes
-    text = text.replace("±", r"\pm").replace("∘", r"^\circ")
-    text = text.replace(r"\implies", r"\Rightarrow")
-    text = re.sub(r"([^\\])%", lambda m: m.group(1) + r"\%", text)
+    if alt.startswith(r"\[") and alt.endswith(r"\]"):
+        return alt[2:-2]
 
-    # --- ASYMPTOTE DIAGRAMS ---
-    asy_start = (
-        "\n\n\\begin{minipage}[c]{\\linewidth}\n\\centering\n\\begin{asy}"
-    )
-    asy_end = "\n\\end{asy}\n\\end{minipage}\n\n"
-    text = re.sub(r"<asy>", lambda _: asy_start, text, flags=re.IGNORECASE)
-    text = re.sub(r"</asy>", lambda _: asy_end, text, flags=re.IGNORECASE)
+    return None
 
-    # text = re.sub(r"import\s*.*", "", text, flags=re.IGNORECASE) # remove imports in asymptote
 
-    def clean_asy(match):
-        lines = [line for line in match.group(0).splitlines() if line.strip()]
-        return "\n".join(lines)
+# ============================================================
+# Normalize image URL
+# ============================================================
 
-    text = re.sub(
-        r"\\begin\{asy\}.*?\\end\{asy\}", clean_asy, text, flags=re.DOTALL
-    )
+def normalize_image_url(img):
+    src = img.get("src")
 
-    # --- LATEX SYNTAX FIXES ---
-    # Remove redundant math wrappers ($ or \[) around align/eqnarray blocks
-    text = re.sub(
-        r"\$\s*\\begin\{(align|eqnarray)\*?\}",
-        lambda m: f"\\begin{{{m.group(1)}}}",
-        text,
-    )
-    text = re.sub(
-        r"\\end\{(align|eqnarray)\*?\}\s*\$",
-        lambda m: f"\\end{{{m.group(1)}}}",
-        text,
-    )
-    text = re.sub(
-        r"\\\[\s*\\begin\{(align|eqnarray)\*?\}",
-        lambda m: f"\\begin{{{m.group(1)}}}",
-        text,
-    )
-    text = re.sub(
-        r"\\end\{(align|eqnarray)\*?\}\s*\\\]",
-        lambda m: f"\\end{{{m.group(1)}}}",
-        text,
-    )
-
-    # Trigonometric formatting (\sinA -> \sin A)
-    text = re.sub(
-        r"\\(sin|cos|tan)([A-Za-z])",
-        lambda m: f"\\{m.group(1)} {m.group(2)}",
-        text,
-    )
-
-    # --- BBCODE & HTML CONVERSIONS ---
-    # Bold: '''text''', [b]text[/b], <b>text</b>
-    text = re.sub(r"'''(.*?)'''", lambda m: f"\\textbf{{{m.group(1)}}}", text)
-    text = re.sub(
-        r"\[b\](.*?)\[/b\]",
-        lambda m: f"\\textbf{{{m.group(1)}}}",
-        text,
-        flags=re.IGNORECASE,
-    )
-    text = re.sub(
-        r"<b>(.*?)</b>",
-        lambda m: f"\\textbf{{{m.group(1)}}}",
-        text,
-        flags=re.IGNORECASE,
-    )
-
-    # Italics: ''text'', [i]text[/i], <i>text</i>
-    text = re.sub(r"''(.*?)''", lambda m: f"\\textit{{{m.group(1)}}}", text)
-    text = re.sub(
-        r"\[i\](.*?)\[/i\]",
-        lambda m: f"\\textit{{{m.group(1)}}}",
-        text,
-        flags=re.IGNORECASE,
-    )
-    text = re.sub(
-        r"<i>(.*?)</i>",
-        lambda m: f"\\textit{{{m.group(1)}}}",
-        text,
-        flags=re.IGNORECASE,
-    )
-
-    # Underline: [u]text[/u], <u>text</u>
-    text = re.sub(
-        r"\[u\](.*?)\[/u\]",
-        lambda m: f"\\underline{{{m.group(1)}}}",
-        text,
-        flags=re.IGNORECASE,
-    )
-    text = re.sub(
-        r"<u>(.*?)</u>",
-        lambda m: f"\\underline{{{m.group(1)}}}",
-        text,
-        flags=re.IGNORECASE,
-    )
-
-    # Strikethrough: [s]text[/s], <s>text</s>, <del>text</del>
-    text = re.sub(
-        r"\[s\](.*?)\[/s\]",
-        lambda m: f"\\sout{{{m.group(1)}}}",
-        text,
-        flags=re.IGNORECASE,
-    )
-    text = re.sub(
-        r"</?(s|del)>",
-        lambda m: f"\\sout{{{m.group(1)}}}",
-        text,
-        flags=re.IGNORECASE,
-    )
-
-    # Color: [color=red]text[/color]
-    text = re.sub(
-        r"\[color=([^\]]+)\](.*?)\[/color\]",
-        lambda m: f"\\textcolor{{{m.group(1)}}}{{{m.group(2)}}}",
-        text,
-        flags=re.IGNORECASE,
-    )
-
-    # Code: [code]text[/code]
-    text = re.sub(
-        r"\[code\](.*?)\[/code\]",
-        lambda m: f"\\texttt{{{m.group(1)}}}",
-        text,
-        flags=re.IGNORECASE,
-    )
-
-    # Quotes: [quote]text[/quote]
-    text = re.sub(
-        r"\[quote\](.*?)\[/quote\]",
-        lambda m: f"\\begin{{quote}}\n{m.group(1)}\n\\end{{quote}}",
-        text,
-        flags=re.DOTALL | re.IGNORECASE,
-    )
-
-    # --- HTML / WIKI CLEANUP ---
-    text = re.sub(r"</?center>", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"</?\s*br\s*/?>", "", text, flags=re.IGNORECASE)
-    text = text.replace("__TOC__", "")
-    text = re.sub(
-        r"<geogebra>(\w*)</geogebra>",
-        lambda m: f"Geogebra: {m.group(1)}",
-        text,
-        flags=re.IGNORECASE,
-    )
-
-    # Links & Categories
-    text = re.sub(r"\[\[Category:[^]]*\]\]", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\[\[[^]|]+\|([^]]+)\]\]", lambda m: m.group(1), text)
-    text = re.sub(r"\[\[([^]|]+)\]\]", lambda m: m.group(1), text)
-
-    return text.strip()
+    if src and src.startswith("//"):
+        img["src"] = "https:" + src
 
 def fetch_aops_page(page_title: str) -> str:
-    url = "https://artofproblemsolving.com/wiki/api.php"
+    # url = "https://artofproblemsolving.com/wiki/api.php"
+    # scraper = cloudscraper.create_scraper()
+    #
+    # params = {
+    #     "action": "parse",
+    #     "page": page_title,
+    #     "format": "json",
+    #     "prop": "text",
+    #     "disablelimitreport": True,
+    # }
+    #
+    # response = scraper.get(url=url, params=params)
+    # response.raise_for_status()
+    #
+    # #print(response.url)
+    #
+    # data = response.json()
+
+    # return data.get("parse", {}).get("text", {}).get("*", "")
+
+    url = f"https://artofproblemsolving.com/wiki/index.php?title={page_title}"
     scraper = cloudscraper.create_scraper()
 
-    params = {
-        "action": "query",
-        "prop": "revisions",
-        "rvprop": "content",
-        "rvslots": "main", # prevent warnings
-        "format": "json",
-        "titles": page_title,
-        "redirects": "",  # automatically resolve redirects
-    }
-
-    response = scraper.get(url=url, params=params)
+    response = scraper.get(url)
     response.raise_for_status()
 
-    data = response.json()
-    pages = data.get("query", {}).get("pages", {})
+    print(f"Fetched AoPS page: {page_title}")
+    return response.text
 
-    content = ""
-    for page_id, page_info in pages.items():
-        if page_id == "-1":
-            raise ValueError(
-                f"Page '{page_title}' does not exist on AoPS Wiki."
-            )
-        revisions = page_info.get("revisions", [])
-        if revisions:
-            content = revisions[0].get("slots", {}).get("main", {}).get("*", "")
+def extract_problems_from_html(raw_wikitext: str) -> list:
+    soup = BeautifulSoup(raw_wikitext, "html.parser")
+    problems = []
 
-    return content
+    # Find problem headers (h2)
+    for header in soup.find_all("h2"):
+        headline = header.find(class_="mw-headline")
+        if headline and "problem" in headline.get("id").lower():
+            content = []
+            curr = header
+            while curr:
+                if curr.name == "p" and curr.find("a"):
+                    break
+                content.append(str(curr))
+                curr = curr.next_sibling
+            problems.append("".join(content))
+
+    print(f"Extracted {len(problems)} problems from AoPS HTML.")
+    return problems
 
 def fetch_aops_problem_set(year: int, contest: str, edition: str) -> list:
     page = f"{year}_{contest}_{edition}_Problems"
 
     raw_wikitext = fetch_aops_page(page)
 
-    problems = extract_problems(raw_wikitext)
+    problems = extract_problems_from_html(raw_wikitext)
 
     print(f"Fetched {len(problems)} problems from AoPS Wiki for {year} {contest} {edition}.")
-    return [latexify(problem) for problem in problems]
+    return problems
+
+# ============================================================
+# Convert AoPS HTML
+# ============================================================
+
+def convert_aops_html(aops_html: str) -> str:
+
+    soup = BeautifulSoup(aops_html, "html.parser")
+
+    for img in soup.find_all("img"):
+
+        classes = img.get("class", [])
+        alt = img.get("alt", "") or ""
+
+        normalize_image_url(img)
+
+        # asymptote
+        if alt.lstrip().startswith("[asy]"):
+
+            img["class"] = list(
+                dict.fromkeys(
+                    classes + ["aops-block-image"]
+                )
+            )
+
+            continue
+
+        # inline latex
+        if "latex" in classes:
+
+            latex = extract_latex(alt)
+
+            if latex is None:
+
+                img["class"] = list(
+                    dict.fromkeys(
+                        classes + ["aops-block-image"]
+                    )
+                )
+
+                continue
+
+            replacement = soup.new_string(
+                r"\(" + latex + r"\)"
+            )
+
+            img.replace_with(replacement)
+
+            continue
+
+        # display latex
+        if "latexcenter" in classes:
+
+            latex = extract_latex(alt)
+
+            if latex is None:
+
+                img["class"] = list(
+                    dict.fromkeys(
+                        classes + ["aops-block-image"]
+                    )
+                )
+
+                continue
+
+            replacement = soup.new_string(
+                r"\[" + latex + r"\]"
+            )
+
+            img.replace_with(replacement)
+
+            continue
+
+        # otherwise, normal image
+        img["class"] = list(
+            dict.fromkeys(
+                classes + ["aops-block-image"]
+            )
+        )
+
+    return str(soup)
+
+
+# ============================================================
+# HTML document
+# ============================================================
+
+def create_html_document(body_html: str) -> str:
+
+    return f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>AoPS Problem</title>
+        <style>
+            body {{
+                font-family: CMU Sans Serif;
+                padding: 10px;
+            }}
+            img.aops-block-image{{
+                display: block;
+                
+                margin-left: auto;
+                margin-right: auto;
+            }}
+        </style>
+    
+        <!-- 1. Include the KaTeX CSS stylesheet -->
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.18.5/dist/katex.min.css" integrity="sha384-2dNi/m6JtSiviznrOIZ5fTiZ5As0In2QwkuXSgoqcQtCNplvJAbt+jveeN+8en73" crossorigin="anonymous">
+            
+        <!-- 2. Include the KaTeX JavaScript library -->
+        <script defer src="https://cdn.jsdelivr.net/npm/katex@0.18.5/dist/katex.min.js" integrity="sha384-TTF8eEsEKInX2meLzP5V1z/npGYIElXYGksx93f0qBZHu6IL3PdzVB8objytx+TR" crossorigin="anonymous"></script>
+            
+        <!-- 3. Include the Auto-render extension to easily parse math delimiters -->
+        <script defer src="https://cdn.jsdelivr.net/npm/katex@0.18.5/dist/contrib/auto-render.min.js" integrity="sha384-bjyGPfbij8/NDKJhSGZNP/khQVgtHUE5exjm4Ydllo42FwIgYsdLO2lXGmRBf5Mz" crossorigin="anonymous"
+            onload="renderMathInElement(document.body);"></script>
+    </head>
+    <body>
+
+    {body_html}
+
+    </body>
+    </html>
+"""
+
+
+# ============================================================
+# Wait for images
+# ============================================================
+
+async def wait_for_images(page):
+
+    await page.wait_for_function(
+        """
+        () => {
+            return Array.from(
+                document.images
+            ).every(
+                img => img.complete
+            );
+        }
+        """
+    )
+
+
+# ============================================================
+# Render
+# ============================================================
+
+async def render_aops_to_png(
+    aops_html: str,
+    output_path: str = "problem.png",
+    width: int = 900,
+    device_scale_factor: int = 2,
+):
+
+    converted_html = convert_aops_html(
+        aops_html
+    )
+
+    document = create_html_document(
+        converted_html
+    )
+
+    async with async_playwright() as p:
+
+        browser = await p.chromium.launch(
+            headless=True
+        )
+
+        page = await browser.new_page(
+            viewport={
+                "width": width,
+                "height": 1000,
+            },
+            device_scale_factor=device_scale_factor,
+        )
+
+        await page.set_content(
+            document,
+            wait_until="networkidle",
+        )
+
+        await wait_for_images(page)
+
+        # Allow browser to finish layout.
+        await page.evaluate(
+            """
+            () => new Promise(resolve => {
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(resolve);
+                });
+            })
+            """
+        )
+
+        await page.screenshot(
+            path=output_path,
+            full_page=True,
+        )
+
+        await browser.close()
+
+# ============================================================
+# Main
+# ============================================================
 
 if __name__ == "__main__":
-    problem_set = fetch_aops_problem_set(2025, "AMC", "10A")
-    for problem in problem_set:
-        print(problem)
-        print("\n---\n")
+    problem_set = fetch_aops_problem_set(
+        year=2025,
+        contest="AMC",
+        edition="10A"
+    )
+
+    asyncio.run(
+        render_aops_to_png(
+            problem_set[14],
+            output_path="problem.png",
+            width=900,
+            device_scale_factor=2,
+        )
+    )
+
+    print("Done! Saved problem.png")
