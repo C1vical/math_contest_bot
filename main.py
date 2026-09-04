@@ -6,7 +6,7 @@ import os
 
 import asyncio
 
-from database import get_problem
+from database import get_problem, prepare_database_and_renders
 
 load_dotenv()
 token = os.getenv("DISCORD_TOKEN")
@@ -71,5 +71,15 @@ async def gimme(ctx, year, contest, question_number):
     #     else:
     #         await ctx.send(f"Incorrect! The answer was {answer}")
 
+async def main():
+    # 1. Wait until all scraping and rendering finishes completely
+    print("Initializing database and rendering images...")
+    await prepare_database_and_renders()
+
+    # 2. Start the Discord bot using bot.start()
+    print("Starting Discord bot...")
+    async with bot:
+        await bot.start(token, log_handler=handler, log_level=logging.DEBUG)
+
 if __name__ == "__main__":
-    bot.run(token, log_handler=handler, log_level=logging.DEBUG)
+    asyncio.run(main())

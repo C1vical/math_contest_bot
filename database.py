@@ -2,8 +2,9 @@ import os
 import sqlite3
 import time
 import random
+import asyncio
 
-from aops_parser import fetch_aops_problem_set
+from aops_parser import fetch_aops_problem_set, render_all_problems_from_db
 from constants import (
     DATABASE,
     CONTEST_REGISTRY,
@@ -230,7 +231,28 @@ def get_problem_answer(problem_file) -> str:
     """Extract the problem answer string from a fetched database tuple."""
     return problem_file[5]
 
+async def prepare_database_and_renders():
+    """
+    Creates DB, runs scraper and Playwright renderer concurrently,
+    and returns when all problems are fully scraped and rendered.
+    """
+    create_database()
+    scraper_done_event = asyncio.Event()
+
+    async def run_scraper():
+        print("Starting problem scraper...")
+        # Offload sync Cloudscraper scraping loop to a background thread
+        await asyncio.to_thread(load_all_problems)
+        print("Scraper completed all contest years.")
+        scraper_done_event.set()
+
+    # Run scraper and renderer in parallel
+    await asyncio.gather(
+        run_scraper(),
+        render_all_problems_from_db(scraper_finished_event=scraper_done_event)
+    )
+    print("Database build and image rendering complete.")
+
 
 if __name__ == "__main__":
-    create_database()
-    load_all_problems()
+    asyncio.run(prepare_database_and_renders())

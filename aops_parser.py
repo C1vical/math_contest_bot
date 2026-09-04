@@ -464,6 +464,7 @@ async def render_all_problems_from_db(
         device_scale_factor: int = 2,
         concurrency: int = 4,
         poll_interval: float = 3.0,
+        scraper_finished_event: asyncio.Event = None,
 ):
     """
     Continuously monitor math_problems.db and render unrendered problem entries to PNG files.
@@ -525,6 +526,11 @@ async def render_all_problems_from_db(
                         for idx, (pid, stmt, path) in enumerate(pending, start=1)
                     ]
                     await asyncio.gather(*tasks)
+
+                # EXIT CONDITION: Scraper finished AND no pending renders2 remain
+                if scraper_finished_event and scraper_finished_event.is_set():
+                    print("All problems scraped and rendered successfully. Stopping daemon.")
+                    break
 
                 await asyncio.sleep(poll_interval)
 
