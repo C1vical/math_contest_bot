@@ -1,3 +1,5 @@
 discord.py
 python-dotenv
 cloudscraper
+playwright
+beautifulsoup4

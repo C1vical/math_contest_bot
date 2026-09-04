@@ -1,6 +1,7 @@
-# Master Contest Registry
-# Format: "FLATTENED_NAME": (Shortcode_Prefix, AoPS_Wiki_Title, Year_Min, Year_Max, Max_Problems)
+DATABASE = "math_problems.db"
 
+# Master Contest Registry
+# Format: "KEY": (Shortcode_Prefix, AoPS_Wiki_Title, Year_Min, Year_Max, Max_Problems)
 CONTEST_REGISTRY = {
     # AJHSME & AMC 8
     "AJHSME": ("AJ", "AJHSME", 1985, 1998, 25),
@@ -13,8 +14,13 @@ CONTEST_REGISTRY = {
     "AMC10FA": ("10FA", "Fall_AMC_10A", 2021, 2021, 25),
     "AMC10FB": ("10FB", "Fall_AMC_10B", 2021, 2021, 25),
 
-    # AHSME & AMC 12
-    "AHSME": ("AH", "AHSME", 1950, 1999, 50),
+    # AHSME (Split by historical problem counts)
+    "AHSME_1950": ("AH", "AHSME", 1950, 1959, 50),
+    "AHSME_1960": ("AH", "AHSME", 1960, 1967, 40),
+    "AHSME_1968": ("AH", "AHSME", 1968, 1973, 35),
+    "AHSME_1974": ("AH", "AHSME", 1974, 1999, 30),
+
+    # AMC 12
     "AMC12": ("12", "AMC_12", 2000, 2001, 25),
     "AMC12A": ("12A", "AMC_12A", 2002, 2025, 25),
     "AMC12B": ("12B", "AMC_12B", 2002, 2025, 25),
@@ -28,57 +34,46 @@ CONTEST_REGISTRY = {
 
     # Olympiads
     "USAJMO": ("UJ", "USAJMO", 2010, 2026, 6),
-    "USAMO": ("U", "USAMO", 1972, 2026, 6),
+    "USAMO_EARLY": ("U", "USAMO", 1972, 1995, 5),  # 5 problems pre-1996
+    "USAMO_MODERN": ("U", "USAMO", 1996, 2026, 6), # 6 problems 1996-present
     "IMO": ("I", "IMO", 1959, 2026, 6),
 }
 
-def resolve_ahsme_max_probs(year: int) -> int:
-    if 1950 <= year <= 1959: return 50
-    if 1960 <= year <= 1967: return 40
-    if 1968 <= year <= 1973: return 35
-    if 1974 <= year <= 1999: return 30
-    return 30
+
+def get_contest_info(year: int, contest: str):
+    """
+    Finds the exact registry tuple for a contest and year, matching across split era entries.
+    """
+
+    # Direct match for single-range keys (e.g., "AMC10A")
+    if contest in CONTEST_REGISTRY:
+        info = CONTEST_REGISTRY[contest]
+        if info[2] <= year <= info[3]:
+            return info
+
+    # Match split-era keys (e.g., matching "AHSME" to "AHSME_1950")
+    for key, info in CONTEST_REGISTRY.items():
+        base_name = key.split("_")[0]
+        if base_name == contest:
+            min_yr, max_yr = info[2], info[3]
+            if min_yr <= year <= max_yr:
+                return info
+
+    return None
 
 
-def get_contest_info(contest: str, year: int):
-    clean_key = contest.upper().replace(" ", "")
-    info = CONTEST_REGISTRY.get(clean_key)
-
-    if not info:
-        return None
-
-    # Dynamically adjust max_probs for AHSME historical variations
-    if clean_key == "AHSME":
-        prefix, wiki_title, min_yr, max_yr, _ = info
-        return (prefix, wiki_title, min_yr, max_yr, resolve_ahsme_max_probs(year))
-
-    return info
-
-def is_valid_request(contest: str, year: int, q_num: int) -> bool:
+def is_valid_request(year: int, contest: str, q_num: int) -> bool:
     """Validates year and problem limits in 1 step."""
-    info = get_contest_info(contest, year)
+    info = get_contest_info(year, contest)
     if not info:
         return False
 
-    prefix, wiki_title, min_year, max_year, max_probs = info
+    _, _, min_year, max_year, max_probs = info
     return (min_year <= year <= max_year) and (1 <= q_num <= max_probs)
 
+
 def generate_problem_id(year: int, contest: str, q_num: int) -> str:
-    """
-    Generates shortcode primary keys using the CONTEST_REGISTRY prefix.
-    Examples:
-      - (2021, "AMC10A", 5)  -> "202110A5"
-      - (1995, "AIME", 8)    -> "1995A08"
-      - (2025, "USAMO", 3)   -> "2025U3"
-      - (1955, "AHSME", 12)  -> "1955HS12"
-    """
-    info = get_contest_info(contest, year)
-
-    if info:
-        # Unpack prefix from the tuple (first element)
-        prefix = info[0]
-    else:
-        # Fallback if an unknown contest is passed
-        prefix = contest.upper().replace(" ", "")
-
+    """Generates shortcode primary keys using the CONTEST_REGISTRY prefix."""
+    info = get_contest_info(year, contest)
+    prefix = info[0] if info else contest
     return f"{year}{prefix}{q_num}"
