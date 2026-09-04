@@ -2,7 +2,7 @@ import sqlite3
 import time
 import random
 
-from aops_parser import fetch_aops_problem_set
+from aops_parser import fetch_all_problems
 from constants import (
     CONTEST_REGISTRY,
     is_valid_request,
@@ -23,7 +23,8 @@ def create_database():
                 question_number INTEGER NOT NULL,
                 question_statement TEXT NOT NULL,
                 answer TEXT NOT NULL,
-                image_path TEXT NOT NULL
+                image_path TEXT NOT NULL,
+                rendered BOOLEAN NOT NULL DEFAULT 0
             )
         """)
 
@@ -52,17 +53,12 @@ def add_problem(year: int, contest: str, q_num: int, statement: str, answer: str
             (problem_id, year, clean_contest, q_num, statement, str(answer), image_path),
         )
 
-
 def get_problem(year: int, contest: str, question_number: int):
     """Constructs shortcode ID from inputs and fetches the problem record."""
     problem_id = generate_problem_id(year, contest, question_number)
 
     with sqlite3.connect(DATABASE) as conn:
         return conn.execute("SELECT * FROM math_problems WHERE id = ?", (problem_id,)).fetchone()
-
-def get_all_problems(year: int, contest: str):
-    with sqlite3.connect(DATABASE) as conn:
-        return conn.execute("SELECT * FROM math_problems WHERE year = ? AND contest = ?", (year,contest)).fetchall()
 
 def load_contest_problems(year: int, contest: str):
     """Load the contest problems into the database."""
@@ -75,7 +71,7 @@ def load_contest_problems(year: int, contest: str):
     wiki_name = wiki_title.replace("_", " ")
 
     try:
-        problems = fetch_aops_problem_set(year, wiki_name)
+        problems = fetch_all_problems(year, wiki_name)
         if not problems:
             print(f"[-] No data: {year} {contest}")
             return
