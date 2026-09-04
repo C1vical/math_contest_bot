@@ -60,6 +60,10 @@ def get_problem(year: int, contest: str, question_number: int):
     with sqlite3.connect(DATABASE) as conn:
         return conn.execute("SELECT * FROM math_problems WHERE id = ?", (problem_id,)).fetchone()
 
+def get_all_problems(year: int, contest: str):
+    with sqlite3.connect(DATABASE) as conn:
+        return conn.execute("SELECT * FROM math_problems WHERE year = ? AND contest = ?", (year,contest)).fetchall()
+
 def load_contest_problems(year: int, contest: str):
     """Load the contest problems into the database."""
     info = get_contest_info(contest, year)
@@ -105,8 +109,3 @@ if __name__ == "__main__":
     create_database()
 
     load_contest_problems(2025, "AMC10A")
-
-
-    # for i in range(2020, 2026):
-    #     load_contest_problems(i, "AMC", "10A", 25)
-    #     time.sleep(random.uniform(1, 3))
