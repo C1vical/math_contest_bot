@@ -4,7 +4,9 @@ import random
 import sqlite3
 import time
 
+import re
 import cloudscraper
+from curl_cffi import requests
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 
@@ -36,8 +38,11 @@ def extract_latex(alt: str):
     if alt.startswith(r"\[") and alt.endswith(r"\]"):
         return alt[2:-2]
 
-    return None
+    return alt
 
+# ============================================================
+# Normalize image URL
+# ============================================================
 
 def normalize_image_url(img):
     """
@@ -221,46 +226,35 @@ def convert_aops_html(aops_html: str) -> str:
 
         # Asymptote visual diagrams
         if alt.lstrip().startswith("[asy]"):
-            img["class"] = list(dict.fromkeys(classes + ["aops-block-image"]))
+            img["class"] = classes + ["aops-block-image"]
             continue
 
         # Inline LaTeX math tags
         if "latex" in classes:
             latex = extract_latex(alt)
-            if latex is None:
-                img["class"] = list(dict.fromkeys(classes + ["aops-block-image"]))
-                continue
-
-            img.replace_with(soup.new_string(rf"\({latex}\)"))
+            replacement = soup.new_string(f"\\({latex}\\)")
+            img.replace_with(replacement)
             continue
 
         # Display/Centered LaTeX math tags
         if "latexcenter" in classes:
             latex = extract_latex(alt)
-            if latex is None:
-                img["class"] = list(dict.fromkeys(classes + ["aops-block-image"]))
-                continue
-
-            img.replace_with(soup.new_string(rf"\[{latex}\]"))
+            replacement = soup.new_string(f"\\[{latex}\\]")
+            img.replace_with(replacement)
             continue
 
-        # Standard standalone images
-        img["class"] = list(dict.fromkeys(classes + ["aops-block-image"]))
+        # otherwise, normal image
+        img["class"] = classes + ["aops-block-image"]
 
     return str(soup)
 
 
+# ============================================================
+# HTML document
+# ============================================================
+
 def create_html_document(body_html: str) -> str:
-    """
-    Wrap problem HTML fragment in a full standalone HTML document configured with KaTeX,
-    Computer Modern fonts, and Discord image layout rules.
 
-    Args:
-        body_html (str): Converted inner HTML problem statement.
-
-    Returns:
-        str: Complete renderable HTML document string.
-    """
     return f"""<!DOCTYPE html>
     <html lang="en">
     <head>
@@ -269,14 +263,14 @@ def create_html_document(body_html: str) -> str:
 
         <title>AoPS Problem</title>
 
-        <!-- Computer Modern Font -->
+        <!-- Computer Modern -->
         <link
             rel="stylesheet"
             type="text/css"
             href="https://cdn.jsdelivr.net/gh/dreampulse/computer-modern-web-font@master/fonts.css"
         >
 
-        <!-- KaTeX Math Engine -->
+        <!-- KaTeX -->
         <link
             rel="stylesheet"
             href="https://cdn.jsdelivr.net/npm/katex@0.18.5/dist/katex.min.css"
@@ -300,6 +294,7 @@ def create_html_document(body_html: str) -> str:
         </script>
 
         <style>
+
             * {{
                 box-sizing: border-box;
             }}
@@ -311,27 +306,39 @@ def create_html_document(body_html: str) -> str:
             }}
 
             body {{
+                /*
+                 * Discord-friendly width.
+                 * At device_scale_factor=2 this produces
+                 * a sharp 1800px-wide PNG.
+                 */
                 width: 900px;
+
                 padding: 32px 42px;
+
                 background: #ffffff;
                 color: #171717;
-                font-family:
-                    "Computer Modern Serif",
-                    "Latin Modern Roman",
-                    "Times New Roman",
-                    serif;
+
+                font-family: "Computer Modern Serif";
+
                 font-size: 20px;
                 line-height: 1.45;
-                -webkit-font-smoothing: antialiased;
-                text-rendering: optimizeLegibility;
             }}
+
+
+            /* ================================================
+               Problem heading
+            ================================================ */
 
             h2 {{
                 margin: 0 0 18px 0;
+
                 padding: 0 0 8px 0;
+
                 font-size: 25px;
                 font-weight: bold;
+
                 line-height: 1.25;
+
                 border-bottom: 1px solid #cccccc;
             }}
 
@@ -340,9 +347,19 @@ def create_html_document(body_html: str) -> str:
                 margin-bottom: 0.5em;
             }}
 
+
+            /* ================================================
+               Text
+            ================================================ */
+
             p {{
                 margin: 0 0 0.75em 0;
             }}
+
+
+            /* ================================================
+               Math
+            ================================================ */
 
             .katex {{
                 font-size: 1.05em;
@@ -352,6 +369,11 @@ def create_html_document(body_html: str) -> str:
                 margin: 0.75em 0;
             }}
 
+
+            /* ================================================
+               Images / diagrams
+            ================================================ */
+
             img {{
                 max-width: 100%;
                 height: auto;
@@ -359,14 +381,23 @@ def create_html_document(body_html: str) -> str:
 
             img.aops-block-image {{
                 display: block;
+
                 max-width: 90%;
+
                 height: auto;
+
                 margin: 14px auto;
             }}
+
+
+            /* ================================================
+               Lists
+            ================================================ */
 
             ul, ol {{
                 margin-top: 0.4em;
                 margin-bottom: 0.7em;
+
                 padding-left: 1.4em;
             }}
 
@@ -374,14 +405,25 @@ def create_html_document(body_html: str) -> str:
                 margin-bottom: 0.15em;
             }}
 
+
+            /* ================================================
+               Tables
+            ================================================ */
+
             table {{
                 border-collapse: collapse;
+
                 margin: 0.75em auto;
             }}
 
             td, th {{
                 padding: 4px 10px;
             }}
+
+
+            /* ================================================
+               AoPS cleanup
+            ================================================ */
 
             .mw-editsection {{
                 display: none;
@@ -391,11 +433,14 @@ def create_html_document(body_html: str) -> str:
                 color: inherit;
                 text-decoration: none;
             }}
+
         </style>
     </head>
 
     <body>
+
         {body_html}
+
     </body>
     </html>"""
 

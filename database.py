@@ -13,6 +13,8 @@ from constants import (
     get_contest_info,
 )
 
+DATABASE = "math_problems.db"
+
 def create_database():
     """Create the SQLite database and table schema if it does not already exist."""
     with sqlite3.connect(DATABASE) as conn:
@@ -24,7 +26,8 @@ def create_database():
                 question_number INTEGER NOT NULL,
                 question_statement TEXT NOT NULL,
                 answer TEXT NOT NULL,
-                image_path TEXT NOT NULL
+                image_path TEXT NOT NULL,
+                rendered BOOLEAN NOT NULL DEFAULT 0
             )
         """)
 
