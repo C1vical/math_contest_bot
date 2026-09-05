@@ -296,11 +296,13 @@ def extract_problems_from_html(raw_wikitext: str) -> list:
     for header in soup.find_all("h2"):
         headline = header.find(class_="mw-headline")
         if headline and "problem" in headline.get("id").lower():
-            content = []
-            curr = header
+            content = [str(header)]
+            curr = header.next_sibling
             while curr:
-                if curr.name == "p" and curr.find("a", string=re.compile(r"Solution", re.I)):
+                if curr.name == "h2":
                     break
+                if curr.name == "p" and curr.find("a", string=re.compile(r"Solution", re.I)):
+                    curr.a.decompose()
                 content.append(str(curr))
                 curr = curr.next_sibling
             problems.append("".join(content))
