@@ -1,11 +1,10 @@
 import re
 import cloudscraper
+from curl_cffi import requests
 from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright
-
-# ============================================================
-# Extract LaTeX
-# ============================================================
+import asyncio
+from playwright.async_api import async_playwright
+import sqlite3
 
 def extract_latex(alt: str):
     alt = alt.strip()
@@ -19,86 +18,16 @@ def extract_latex(alt: str):
     if alt.startswith(r"\[") and alt.endswith(r"\]"):
         return alt[2:-2]
 
-    return None
+    return alt
 
-
-# ============================================================
-# Normalize image URL
-# ============================================================
-
+# add "https:" to start of image url
 def normalize_image_url(img):
     src = img.get("src")
 
     if src and src.startswith("//"):
         img["src"] = "https:" + src
 
-def fetch_aops_page(page_title: str) -> str:
-    url = "https://artofproblemsolving.com/wiki/api.php"
-
-
-    scraper = cloudscraper.create_scraper()
-
-    params = {
-        "action": "parse",
-        "page": page_title,
-        "format": "json",
-        "prop": "text",
-        "disablelimitreport": True,
-    }
-
-    response = scraper.get(url=url, params=params)
-    response.raise_for_status()
-
-    #print(response.url)
-
-    data = response.json()
-
-    print(f"Fetched AoPS page: {page_title}")
-    return data.get("parse", {}).get("text", {}).get("*", "")
-
-    # url = f"https://artofproblemsolving.com/wiki/index.php?title={page_title}"
-    # scraper = cloudscraper.create_scraper()
-    #
-    # response = scraper.get(url)
-    # response.raise_for_status()
-    #
-    # print(f"Fetched AoPS page: {page_title}")
-    # return response.text
-
-def extract_problems_from_html(raw_wikitext: str) -> list:
-    soup = BeautifulSoup(raw_wikitext, "html.parser")
-    problems = []
-
-    # Find problem headers (h2)
-    for header in soup.find_all("h2"):
-        headline = header.find(class_="mw-headline")
-        if headline and "problem" in headline.get("id").lower():
-            content = []
-            curr = header
-            while curr:
-                if curr.name == "p" and curr.find("a", string=re.compile(r"Solution", re.I)):
-                    break
-                content.append(str(curr))
-                curr = curr.next_sibling
-            problems.append("".join(content))
-
-    print(f"Extracted {len(problems)} problems from AoPS HTML.")
-    return problems
-
-def fetch_aops_problem_set(year: int, wiki_name: str) -> list:
-    page = f"{year}_{wiki_name.replace(' ', '_')}_Problems"
-
-    raw_wikitext = fetch_aops_page(page)
-
-    problems = extract_problems_from_html(raw_wikitext)
-
-    print(f"Fetched {len(problems)} problems from AoPS Wiki for {year} {wiki_name}.")
-    return problems
-
-# ============================================================
-# Convert AoPS HTML
-# ============================================================
-
+# convert html to katex
 def convert_aops_html(aops_html: str) -> str:
 
     soup = BeautifulSoup(aops_html, "html.parser")
@@ -112,75 +41,29 @@ def convert_aops_html(aops_html: str) -> str:
 
         # asymptote
         if alt.lstrip().startswith("[asy]"):
-
-            img["class"] = list(
-                dict.fromkeys(
-                    classes + ["aops-block-image"]
-                )
-            )
-
+            img["class"] = classes + ["aops-block-image"]
             continue
 
         # inline latex
         if "latex" in classes:
-
             latex = extract_latex(alt)
-
-            if latex is None:
-
-                img["class"] = list(
-                    dict.fromkeys(
-                        classes + ["aops-block-image"]
-                    )
-                )
-
-                continue
-
-            replacement = soup.new_string(
-                r"\(" + latex + r"\)"
-            )
-
+            replacement = soup.new_string(f"\\({latex}\\)")
             img.replace_with(replacement)
-
             continue
 
         # display latex
         if "latexcenter" in classes:
-
             latex = extract_latex(alt)
-
-            if latex is None:
-
-                img["class"] = list(
-                    dict.fromkeys(
-                        classes + ["aops-block-image"]
-                    )
-                )
-
-                continue
-
-            replacement = soup.new_string(
-                r"\[" + latex + r"\]"
-            )
-
+            replacement = soup.new_string(f"\\[{latex}\\]")
             img.replace_with(replacement)
-
             continue
 
         # otherwise, normal image
-        img["class"] = list(
-            dict.fromkeys(
-                classes + ["aops-block-image"]
-            )
-        )
+        img["class"] = classes + ["aops-block-image"]
 
     return str(soup)
 
-
-# ============================================================
-# HTML document
-# ============================================================
-
+# html template with katex
 def create_html_document(body_html: str) -> str:
 
     return f"""<!DOCTYPE html>
@@ -246,17 +129,10 @@ def create_html_document(body_html: str) -> str:
                 background: #ffffff;
                 color: #171717;
 
-                font-family:
-                    "Computer Modern Serif",
-                    "Latin Modern Roman",
-                    "Times New Roman",
-                    serif;
+                font-family: "Computer Modern Serif";
 
                 font-size: 20px;
                 line-height: 1.45;
-
-                -webkit-font-smoothing: antialiased;
-                text-rendering: optimizeLegibility;
             }}
 
 
@@ -379,53 +255,102 @@ def create_html_document(body_html: str) -> str:
     </body>
     </html>"""
 
-# ============================================================
-# Render
-# ============================================================
+def fetch_raw_wikitext(page_title: str) -> str:
+    # url = "https://artofproblemsolving.com/wiki/api.php"
+    #
+    # scraper = cloudscraper.create_scraper()
+    #
+    # params = {
+    #     "action": "parse",
+    #     "page": page_title,
+    #     "format": "json",
+    #     "prop": "text",
+    #     "disablelimitreport": True,
+    # }
+    #
+    # response = scraper.get(url=url, params=params)
+    # response.raise_for_status()
+    #
+    # #print(response.url)
+    #
+    # data = response.json()
+    #
+    # print("Fetched html!")
+    # return data.get("parse", {}).get("text", {}).get("*", "")
 
-def render_problems(year: int, contest: str):
-    from database import get_all_problems
+    url = f"https://artofproblemsolving.com/wiki/index.php?title={page_title}"
+    # scraper = cloudscraper.create_scraper()
+    #
+    # response = scraper.get(url)
+    response = requests.get(url, impersonate="chrome")
+    response.raise_for_status()
 
-    problems = get_all_problems(year, contest)
+    print(f"Fetched AoPS page: {page_title}")
+    return response.text
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page(
-            viewport={
-                "width": 900,
-                "height": 800,
-            },
-            device_scale_factor=2,
-        )
+def extract_problems_from_html(raw_wikitext: str) -> list:
+    soup = BeautifulSoup(raw_wikitext, "html.parser")
+    problems = []
 
-        x=1
-        for problem in problems:
-            converted_html = convert_aops_html(
-                 problem[4]
-            )
+    # Find problem headers (h2)
+    for header in soup.find_all("h2"):
+        headline = header.find(class_="mw-headline")
+        if headline and "problem" in headline.get("id").lower():
+            content = []
+            curr = header
+            while curr:
+                if curr.name == "p" and curr.find("a", string=re.compile(r"Solution", re.I)):
+                    break
+                content.append(str(curr))
+                curr = curr.next_sibling
+            problems.append("".join(content))
 
-            document = create_html_document(
-                converted_html
-            )
+    # convert
+    problems = [convert_aops_html(problem) for problem in problems]
 
-            page.set_content(document)
+    print("Problems extracted and converted!")
+    return problems
 
-            body_element = page.locator("body")
+def fetch_all_problems(year: int, wiki_name: str) -> list:
+    page_title = f"{year}_{wiki_name}_Problems"
 
-            body_element.screenshot(path=problem[6])
+    raw_wikitext = fetch_raw_wikitext(page_title)
 
-            print(f"Problem {x} complete!")
-            x+=1
+    problems = extract_problems_from_html(raw_wikitext)
 
-        browser.close()
+    return problems
 
-# ============================================================
-# Main
-# ============================================================
+async def render_problem(semaphore, context, html: str, output_path: str, id: int):
+    async with semaphore:
+        page = await context.new_page()
+
+        document = create_html_document(html)
+
+        await page.set_content(document)
+
+        await page.locator("body").screenshot(path=output_path)
+
+        await page.close()
+
+        with sqlite3.connect("math_problems.db") as conn:
+            conn.execute("UPDATE math_problems SET rendered = 1 WHERE id = ?", (id,))
+        print(f"Successfully rendered problem id: {id}!")
+
+async def render_problems():
+    print("Starting...")
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context(viewport={"width": 900, "height": 800}, device_scale_factor=2)
+        semaphore = asyncio.Semaphore(4)
+
+        with sqlite3.connect("math_problems.db") as conn:
+            rows = conn.execute("SELECT question_statement, image_path, id FROM math_problems WHERE rendered = 0").fetchall()
+
+        tasks = [render_problem(semaphore, context, html=row[0], output_path=row[1], id=row[2]) for row in rows]
+        await asyncio.gather(*tasks)
+
+        await browser.close()
+        print("Done!")
 
 if __name__ == "__main__":
-    render_problems(
-        year=2025,
-        contest="AMC10A"
-    )
-    print(f"Done!")
+    asyncio.run(render_problems())
