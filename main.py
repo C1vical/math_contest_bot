@@ -6,7 +6,7 @@ import os
 
 import asyncio
 
-from database import get_problem, get_problem_answer, get_problem_statement
+from database import get_problem, prepare_database_and_renders
 
 load_dotenv()
 token = os.getenv("DISCORD_TOKEN")
@@ -39,26 +39,48 @@ async def repeat(ctx, *, arg):
 
 @bot.command()
 @commands.check(in_channel)
-async def gimme(ctx, year, contest, edition, question_number):
-    question = get_problem(int(year), contest, edition, int(question_number))
+async def gimme(ctx, year, contest, question_number):
 
-    statement = get_problem_statement(question)
-    answer = get_problem_answer(question)
+    problem = get_problem(int(year), contest, int(question_number))
 
-    await ctx.send(f"```latex\n{statement}\n```")
+    if not problem:
+        await ctx.send("Problem not found in database!")
+        return
 
-    def check(message):
-        return message.author == ctx.author and message.channel == ctx.channel
+    problem_statement = problem[4]
+    answer = problem[5]
+    image_path = problem[6]
 
-    try:
-        response = await bot.wait_for("message", timeout=5.0, check=check)
-    except asyncio.TimeoutError:
-        await ctx.send(f"Ran out of time! The answer was {answer}")
+    # Send rendered PNG image if present, fallback to raw LaTeX codeblock
+    if image_path and os.path.exists(image_path):
+        file = discord.File(image_path, filename=os.path.basename(image_path))
+        await ctx.send(file=file)
     else:
-        if response.content == str(answer):
-            await ctx.send("Correct!")
-        else:
-            await ctx.send(f"Incorrect! The answer was {answer}")
+        await ctx.send(f"```latex\n{problem_statement}\n```")
+
+    # def check(message):
+    #     return message.author == ctx.author and message.channel == ctx.channel
+    #
+    # try:
+    #     response = await bot.wait_for("message", timeout=5.0, check=check)
+    # except asyncio.TimeoutError:
+    #     await ctx.send(f"Ran out of time! The answer was {answer}")
+    # else:
+    #     if response.content == str(answer):
+    #         await ctx.send("Correct!")
+    #     else:
+    #         await ctx.send(f"Incorrect! The answer was {answer}")
+
+async def main():
+    # 1. Wait until all scraping and rendering finishes completely
+    print("Initializing database and rendering images...")
+    await prepare_database_and_renders()
+
+    # 2. Start the Discord bot using bot.start()
+    print("Starting Discord bot...")
+    async with bot:
+        await bot.start(token, log_handler=handler, log_level=logging.DEBUG)
 
 if __name__ == "__main__":
-    bot.run(token, log_handler=handler, log_level=logging.DEBUG)
+    asyncio.run(main())
+    # bot.run(token, log_handler=handler, log_level=logging.DEBUG)

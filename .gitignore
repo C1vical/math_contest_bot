@@ -2,3 +2,5 @@
 .env
 discord.log
 __pycache__/
+math_problems.db
+renders
