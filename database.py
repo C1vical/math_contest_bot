@@ -13,7 +13,7 @@ from constants import (
     get_contest_info,
 )
 
-DATABASE = "math_problems.db"
+from constants import DATABASE
 
 def create_database():
     """Create the SQLite database and table schema if it does not already exist."""
@@ -164,7 +164,7 @@ def load_contest_problems(year: int, contest: str, loaded_set: set = None):
     wiki_name = wiki_title.replace("_", " ")
 
     # Fallback SQLite check if cache set was not provided
-    if loaded_set is None and is_contest_loaded(year, contest, max_probs):
+    if loaded_set is None and is_contest_loaded(year, contest):
         print(f"Skipping {year} {contest}: Already fully loaded.")
         return
 
@@ -257,5 +257,32 @@ async def prepare_database_and_renders():
     print("Database build and image rendering complete.")
 
 
+async def test_single_contest(year: int, contest: str):
+    """
+    Test helper to scrape and render a single specific contest year.
+    """
+    print(f"--- Running Test for: {year} {contest} ---")
+    create_database()
+    scraper_done_event = asyncio.Event()
+
+    async def run_single_scraper():
+        print(f"Scraping problem set for {year} {contest}...")
+        # Run single contest scraper in a background thread
+        await asyncio.to_thread(load_contest_problems, year, contest)
+        print(f"Finished scraping {year} {contest}.")
+        scraper_done_event.set()
+
+    # Run single-contest scraper and renderer in parallel
+    await asyncio.gather(
+        run_single_scraper(),
+        render_all_problems_from_db(scraper_finished_event=scraper_done_event)
+    )
+    print(f"--- Test complete for {year} {contest} ---")
+
+
 if __name__ == "__main__":
-    asyncio.run(prepare_database_and_renders())
+    # Change these values to test any contest you want
+    TEST_YEAR = 2008
+    TEST_CONTEST = "AMC10B"
+
+    asyncio.run(test_single_contest(TEST_YEAR, TEST_CONTEST))

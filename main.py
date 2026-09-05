@@ -83,3 +83,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+    # bot.run(token, log_handler=handler, log_level=logging.DEBUG)

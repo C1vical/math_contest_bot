@@ -1,12 +1,12 @@
 import asyncio
 import os
 import random
+import re
+
 import sqlite3
 import time
 
-import re
 import cloudscraper
-from curl_cffi import requests
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 
@@ -17,28 +17,53 @@ from constants import DATABASE
 # LaTeX & URL Normalization
 # ============================================================
 
-def extract_latex(alt: str):
+def extract_latex(text: str) -> str:
     """
-    Extract raw LaTeX string from standard delimiters in image alt text.
-
-    Args:
-        alt (str): The alt text of an image tag.
-
-    Returns:
-        str | None: Cleaned LaTeX string if delimited, else None.
+    Extracts raw LaTeX, strips delimiters, cleans HTML entities,
+    and normalizes macros/environments for KaTeX compatibility.
     """
-    alt = alt.strip()
+    if not text:
+        return ""
 
-    if alt.startswith("$$") and alt.endswith("$$"):
-        return alt[2:-2]
+    # 1. Replace basic HTML entities
+    text = (
+        text.replace("&#160;", " ")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&")
+        .replace("&quot;", '"')
+    )
 
-    if alt.startswith("$") and alt.endswith("$"):
-        return alt[1:-1]
+    # 2. Strip outer delimiters ($$, $, \[\], \(\))
+    text = text.strip()
+    if (text.startswith("$$") and text.endswith("$$")) or (text.startswith(r"\[") and text.endswith(r"\]")):
+        text = text[2:-2]
+    elif (text.startswith("$") and text.endswith("$")) or (text.startswith(r"\(") and text.endswith(r"\)")):
+        text = text[1:-1]
 
-    if alt.startswith(r"\[") and alt.endswith(r"\]"):
-        return alt[2:-2]
+    # Remove any remaining loose delimiter escape tags
+    text = re.sub(r"\\\[|\\\]|\\\(|\\\)", "", text)
 
-    return alt
+    # 3. Escape HTML comparison operators and raw dollar signs
+    text = text.replace("&lt;", r"\lt ").replace("&gt;", r"\gt ")
+
+    # 4. Transform environments and non-standard LaTeX macros
+    text = re.sub(r"\{tabular\}(\[\w\])*", "{array}", text)
+
+    text = (
+        text.replace("align*", "aligned")
+        .replace("eqnarray*", "aligned")
+        .replace(r"\bold{", r"\mathbf{")
+        .replace(r"\congruent", r"\cong")
+        .replace(r"\overarc", r"\overgroup")
+        .replace(r"\overparen", r"\overgroup")
+        .replace(r"\underarc", r"\undergroup")
+        .replace(r"\underparen", r"\undergroup")
+        .replace(r"\mathdollar", r"\$")
+        .replace(r"\textdollar", r"\$")
+    )
+
+    return text.strip()
+
 
 # ============================================================
 # Normalize image URL
@@ -91,7 +116,6 @@ def fetch_aops_page(page_title: str, max_retries: int = 3) -> str:
 
     for attempt in range(1, max_retries + 1):
         try:
-            # Politeness delay between attempts
             time.sleep(random.uniform(2.5, 4.5))
             response = scraper.get(url, headers=headers)
 
@@ -150,35 +174,28 @@ async def fetch_aops_page_playwright(page_title: str) -> str:
 
 
 def extract_problems_from_html(raw_wikitext: str) -> list:
-    """
-    Parse AoPS Wiki HTML content to extract problem section blocks under H2/H3 headlines.
-
-    Args:
-        raw_wikitext (str): Raw HTML source from AoPS wiki page.
-
-    Returns:
-        list: A list of extracted problem HTML string snippets.
-    """
     soup = BeautifulSoup(raw_wikitext, "html.parser")
     problems = []
 
-    for header in soup.find_all(["h2", "h3"]):
+    # Find problem headers (h2)
+    for header in soup.find_all("h2"):
         headline = header.find(class_="mw-headline")
-        if headline and "problem" in headline.get("id", "").lower():
-            content = []
+        if headline and "problem" in headline.get("id").lower():
+            content = [str(header)]
             curr = header.next_sibling
             while curr:
-                # Stop when reaching the next section header
-                if curr.name in ["h2", "h3"]:
+                if curr.name == "h2":
                     break
+                if curr.name == "p" and curr.find("a", string=re.compile(r"Solution", re.I)):
+                    curr.a.decompose()
+
                 content.append(str(curr))
+
                 curr = curr.next_sibling
 
-            problem_html = "".join(content).strip()
-            if problem_html:
-                problems.append(problem_html)
+            problems.append("".join(content))
 
-    print(f"Extracted {len(problems)} problems from HTML.")
+    print("Problems extracted and converted!")
     return problems
 
 
@@ -306,39 +323,21 @@ def create_html_document(body_html: str) -> str:
             }}
 
             body {{
-                /*
-                 * Discord-friendly width.
-                 * At device_scale_factor=2 this produces
-                 * a sharp 1800px-wide PNG.
-                 */
                 width: 900px;
-
                 padding: 32px 42px;
-
                 background: #ffffff;
                 color: #171717;
-
                 font-family: "Computer Modern Serif";
-
                 font-size: 20px;
                 line-height: 1.45;
             }}
 
-
-            /* ================================================
-               Problem heading
-            ================================================ */
-
             h2 {{
                 margin: 0 0 18px 0;
-
                 padding: 0 0 8px 0;
-
                 font-size: 25px;
                 font-weight: bold;
-
                 line-height: 1.25;
-
                 border-bottom: 1px solid #cccccc;
             }}
 
@@ -347,19 +346,9 @@ def create_html_document(body_html: str) -> str:
                 margin-bottom: 0.5em;
             }}
 
-
-            /* ================================================
-               Text
-            ================================================ */
-
             p {{
                 margin: 0 0 0.75em 0;
             }}
-
-
-            /* ================================================
-               Math
-            ================================================ */
 
             .katex {{
                 font-size: 1.05em;
@@ -369,11 +358,6 @@ def create_html_document(body_html: str) -> str:
                 margin: 0.75em 0;
             }}
 
-
-            /* ================================================
-               Images / diagrams
-            ================================================ */
-
             img {{
                 max-width: 100%;
                 height: auto;
@@ -381,23 +365,14 @@ def create_html_document(body_html: str) -> str:
 
             img.aops-block-image {{
                 display: block;
-
                 max-width: 90%;
-
                 height: auto;
-
                 margin: 14px auto;
             }}
-
-
-            /* ================================================
-               Lists
-            ================================================ */
 
             ul, ol {{
                 margin-top: 0.4em;
                 margin-bottom: 0.7em;
-
                 padding-left: 1.4em;
             }}
 
@@ -405,25 +380,14 @@ def create_html_document(body_html: str) -> str:
                 margin-bottom: 0.15em;
             }}
 
-
-            /* ================================================
-               Tables
-            ================================================ */
-
             table {{
                 border-collapse: collapse;
-
                 margin: 0.75em auto;
             }}
 
             td, th {{
                 padding: 4px 10px;
             }}
-
-
-            /* ================================================
-               AoPS cleanup
-            ================================================ */
 
             .mw-editsection {{
                 display: none;
@@ -450,12 +414,7 @@ def create_html_document(body_html: str) -> str:
 # ============================================================
 
 async def wait_for_images(page):
-    """
-    Wait until all images on the active browser page are fully downloaded and loaded.
-
-    Args:
-        page (playwright.async_api.Page): Active Playwright page object.
-    """
+    """Wait until all images on the active browser page are fully downloaded and loaded."""
     await page.wait_for_function(
         "() => Array.from(document.images).every(img => img.complete)"
     )
@@ -468,11 +427,6 @@ async def render_aops_page(
 ):
     """
     Render transformed problem HTML string into a PNG image using a Playwright page instance.
-
-    Args:
-        page (playwright.async_api.Page): Active Playwright browser page instance.
-        aops_html (str): Problem HTML string snippet to render.
-        output_path (str): File destination path for generated image.
     """
     converted_html = convert_aops_html(aops_html)
     document = create_html_document(converted_html)
@@ -487,7 +441,6 @@ async def render_aops_page(
 
     await wait_for_images(page)
 
-    # Force double animation frame render buffer before taking screenshot
     await page.evaluate(
         """() => new Promise(resolve => {
             requestAnimationFrame(() => {
@@ -508,18 +461,14 @@ async def render_all_problems_from_db(
         width: int = 900,
         device_scale_factor: int = 2,
         concurrency: int = 4,
-        poll_interval: float = 3.0,
+        poll_interval: float = 0.5,
         scraper_finished_event: asyncio.Event = None,
 ):
+
+    os.makedirs("renders", exist_ok=True)
+
     """
     Continuously monitor math_problems.db and render unrendered problem entries to PNG files.
-
-    Args:
-        db_path (str): Path to SQLite database file.
-        width (int): Target viewport width for browser page.
-        device_scale_factor (int): Scale factor multiplier for crisp high-DPI screenshot output.
-        concurrency (int): Maximum concurrent tab rendering workers.
-        poll_interval (float): Database polling pause delay in seconds.
     """
     print("Starting Playwright image rendering daemon...")
 
@@ -533,13 +482,11 @@ async def render_all_problems_from_db(
                     await asyncio.sleep(poll_interval)
                     continue
 
-                # Query database for problem entries
                 with sqlite3.connect(db_path) as conn:
                     cursor = conn.cursor()
                     cursor.execute("SELECT id, question_statement, image_path FROM math_problems")
                     rows = cursor.fetchall()
 
-                # Filter items missing an image file on disk
                 pending = [
                     (pid, question_statement, path)
                     for pid, question_statement, path in rows
@@ -547,22 +494,22 @@ async def render_all_problems_from_db(
                 ]
 
                 if pending:
-                    print(f"Found {len(pending)} new problems to render...")
+                    print(f"Found {len(pending)} unrendered problems. Processing batch...")
 
                     async def worker(pid, statement, image_path, idx):
                         async with semaphore:
-                            # Create destination directory structure if needed
-                            os.makedirs(os.path.dirname(image_path), exist_ok=True)
+                            print(f" -> [Rendering {idx}/{len(pending)}] {image_path}")
 
+                            os.makedirs(os.path.dirname(image_path), exist_ok=True)
                             page = await browser.new_page(
                                 viewport={"width": width, "height": 800},
                                 device_scale_factor=device_scale_factor,
                             )
                             try:
                                 await render_aops_page(page, statement, output_path=image_path)
-                                print(f"[{idx}/{len(pending)}] Rendered: {image_path}")
+                                print(f" ✓ [Finished {idx}/{len(pending)}] {image_path}")
                             except Exception as e:
-                                print(f"Failed to render {pid}: {e}")
+                                print(f" ✗ Failed to render {pid}: {e}")
                             finally:
                                 await page.close()
 
@@ -572,7 +519,6 @@ async def render_all_problems_from_db(
                     ]
                     await asyncio.gather(*tasks)
 
-                # EXIT CONDITION: Scraper finished AND no pending renders2 remain
                 if scraper_finished_event and scraper_finished_event.is_set():
                     print("All problems scraped and rendered successfully. Stopping daemon.")
                     break
@@ -584,10 +530,6 @@ async def render_all_problems_from_db(
         finally:
             await browser.close()
 
-
-# ============================================================
-# Main Execution
-# ============================================================
 
 if __name__ == "__main__":
     asyncio.run(render_all_problems_from_db())
