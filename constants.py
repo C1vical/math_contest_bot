@@ -34,8 +34,8 @@ CONTEST_REGISTRY = {
 
     # Olympiads
     "USAJMO": ("UJ", "USAJMO", 2010, 2026, 6),
-    "USAMO_EARLY": ("U", "USAMO", 1972, 1995, 5),  # 5 problems pre-1996
-    "USAMO_MODERN": ("U", "USAMO", 1996, 2026, 6), # 6 problems 1996-present
+    "USAMO_1972": ("U", "USAMO", 1972, 1995, 5),  # 5 problems pre-1996
+    "USAMO_1996": ("U", "USAMO", 1996, 2026, 6), # 6 problems 1996-present
     "IMO": ("I", "IMO", 1959, 2026, 6),
 }
 
@@ -51,7 +51,7 @@ def get_contest_info(year: int, contest: str):
         if info[2] <= year <= info[3]:
             return info
 
-    # Match split-era keys (e.g., matching "AHSME" to "AHSME_1950")
+    # Match split-era keys (e.g., matching "AHSME" to "AHSME_1950", "USAMO" to "USAMO_1972")
     for key, info in CONTEST_REGISTRY.items():
         base_name = key.split("_")[0]
         if base_name == contest:
