@@ -343,7 +343,7 @@ async def render_problems():
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(viewport={"width": 900, "height": 800}, device_scale_factor=2)
-        semaphore = asyncio.Semaphore(4)
+        semaphore = asyncio.Semaphore(10)
 
         with sqlite3.connect("math_problems.db") as conn:
             rows = conn.execute("SELECT question_statement, image_path, id FROM math_problems WHERE rendered = 0").fetchall()
