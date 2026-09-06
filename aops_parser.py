@@ -1,38 +1,20 @@
 import asyncio
 import os
-import random
 import re
 
 from curl_cffi import requests
 import sqlite3
-import time
 
-import cloudscraper
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 
-from constants import DATABASE
-
-
-# ============================================================
-# LaTeX & URL Normalization
-# ============================================================
-
 def extract_latex(text: str) -> str:
-    """
-    Extracts raw LaTeX, strips delimiters, cleans HTML entities,
-    and normalizes macros/environments for KaTeX compatibility.
-    """
+    """Clean HTML entities, strip delimiters, and normalize macros for KaTeX."""
     if not text:
         return ""
 
     # 1. Replace basic HTML entities
-    text = (
-        text.replace("&#160;", " ")
-        .replace("&#39;", "'")
-        .replace("&amp;", "&")
-        .replace("&quot;", '"')
-    )
+    text = (text.replace("&#160;", " ").replace("&#39;", "'").replace("&amp;", "&").replace("&quot;", '"'))
 
     # 2. Strip outer delimiters ($$, $, \[\], \(\))
     text = text.strip()
@@ -65,92 +47,81 @@ def extract_latex(text: str) -> str:
 
     return text.strip()
 
-
-# ============================================================
-# Normalize image URL
-# ============================================================
-
 def normalize_image_url(img):
-    """
-    Ensure relative protocol URLs (starting with '//') are converted to full HTTPS URLs.
-
-    Args:
-        img (bs4.element.Tag): BeautifulSoup Image element to normalize in-place.
-    """
+    """Ensure relative protocol URLs convert to HTTPS."""
     src = img.get("src")
     if src and src.startswith("//"):
         img["src"] = "https:" + src
 
+# def fetch_aops_page(page_title: str, max_retries: int = 3) -> str:
+#     """Fetch raw HTML content from an AoPS wiki page with retries."""
+#     url = f"https://artofproblemsolving.com/wiki/index.php?title={page_title}"
+#
+#     headers = {
+#         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+#         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+#         "Accept-Language": "en-US,en;q=0.9",
+#         "Referer": "https://artofproblemsolving.com/wiki/index.php",
+#         "Sec-Ch-Ua": '"Not-A.Brand";v="99", "Chromium";v="124", "Google Chrome";v="124"',
+#         "Sec-Ch-Ua-Mobile": "?0",
+#         "Sec-Ch-Ua-Platform": '"Windows"',
+#         "Sec-Fetch-Dest": "document",
+#         "Sec-Fetch-Mode": "navigate",
+#         "Sec-Fetch-Site": "same-origin",
+#     }
+#
+#     scraper = cloudscraper.create_scraper()
+#
+#     for attempt in range(1, max_retries + 1):
+#         try:
+#             time.sleep(random.uniform(2.5, 4.5))
+#             response = scraper.get(url, headers=headers)
+#
+#             if response.status_code == 403:
+#                 print(f"403 Forbidden for {page_title} on attempt {attempt}.")
+#                 if attempt == max_retries:
+#                     return asyncio.run(fetch_aops_page_playwright(page_title))
+#
+#                 time.sleep(attempt * 5)
+#                 continue
+#
+#             response.raise_for_status()
+#             print(f"Fetched AoPS page: {page_title}")
+#             return response.text
+#
+#         except Exception as e:
+#             if attempt == max_retries:
+#                 print(f"Failed to fetch {page_title}: {e}")
+#                 return asyncio.run(fetch_aops_page_playwright(page_title))
+#             time.sleep(attempt * 3)
+#
+#     return ""
 
-# ============================================================
-# AoPS Scraping & HTML Parsing
-# ============================================================
-
-def fetch_aops_page(page_title: str, max_retries: int = 3) -> str:
-    """
-    Fetch raw HTML content of an AoPS wiki page using Cloudscraper with exponential backoff.
-    Falls back to headless Playwright if HTTP 403 or request limits are hit.
-
-    Args:
-        page_title (str): Title/path parameter of the AoPS wiki target.
-        max_retries (int): Maximum retry attempts for Cloudscraper before fallback.
-
-    Returns:
-        str: Raw HTML source of the target page, or empty string on failure.
-    """
+async def fetch_aops_page(page_title: str, max_retries: int = 3) -> str:
+    """Fetch raw HTML content from an AoPS wiki page with retries."""
     url = f"https://artofproblemsolving.com/wiki/index.php?title={page_title}"
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://artofproblemsolving.com/wiki/index.php",
-        "Sec-Ch-Ua": '"Not-A.Brand";v="99", "Chromium";v="124", "Google Chrome";v="124"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"',
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "same-origin",
-    }
-
-    scraper = cloudscraper.create_scraper()
 
     for attempt in range(1, max_retries + 1):
         try:
-            time.sleep(random.uniform(2.5, 4.5))
-            response = scraper.get(url, headers=headers)
-
-            if response.status_code == 403:
-                print(f"403 Forbidden for {page_title} on attempt {attempt}.")
-                if attempt == max_retries:
-                    return asyncio.run(fetch_aops_page_playwright(page_title))
-
-                time.sleep(attempt * 5)
-                continue
-
+            async with requests.AsyncSession() as session:
+                response = await session.get(url, impersonate="chrome", timeout=10)
             response.raise_for_status()
             print(f"Fetched AoPS page: {page_title}")
             return response.text
-
         except Exception as e:
+            if hasattr(e, "response") and getattr(e.response, "status_code", None) == 429:
+                print(f"Rate limited (429) on {page_title}. Backing off for 10s...")
+                await asyncio.sleep(10)
+
             if attempt == max_retries:
-                print(f"Failed to fetch {page_title}: {e}")
-                return asyncio.run(fetch_aops_page_playwright(page_title))
-            time.sleep(attempt * 3)
+                print(f"Cloudscraper/curl_cffi failed for {page_title}: {e}. Falling back to Playwright.")
+                return await fetch_aops_page_playwright(page_title)
+            await asyncio.sleep(attempt * 2)
 
     return ""
 
-
 async def fetch_aops_page_playwright(page_title: str) -> str:
-    """
-    Fallback browser fetcher using Playwright when Cloudscraper encounters anti-bot protections.
-
-    Args:
-        page_title (str): Title/path parameter of the AoPS wiki target.
-
-    Returns:
-        str: Raw HTML source of the target page.
-    """
+    """Fallback browser fetcher using Playwright."""
     url = f"https://artofproblemsolving.com/wiki/index.php?title={page_title}"
     print(f"Falling back to Playwright for: {page_title}")
 
@@ -162,7 +133,7 @@ async def fetch_aops_page_playwright(page_title: str) -> str:
         )
         page = await context.new_page()
 
-        response = await page.goto(url, wait_until="networkidle", timeout=15000)
+        response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
         if response and response.status == 403:
             print(f"Playwright received 403 on {page_title}")
@@ -173,67 +144,8 @@ async def fetch_aops_page_playwright(page_title: str) -> str:
         await browser.close()
         return content
 
-
-def extract_problems_from_html(raw_wikitext: str) -> list:
-    soup = BeautifulSoup(raw_wikitext, "html.parser")
-    problems = []
-
-    # Find problem headers (h2)
-    for header in soup.find_all("h2"):
-        headline = header.find(class_="mw-headline")
-        if headline and "problem" in headline.get("id").lower():
-            content = [str(header)]
-            curr = header.next_sibling
-            while curr:
-                if curr.name == "h2":
-                    break
-                if curr.name == "p" and curr.find("a", string=re.compile(r"Solution", re.I)):
-                    curr.a.decompose()
-
-                content.append(str(curr))
-
-                curr = curr.next_sibling
-
-            problems.append("".join(content))
-
-    print("Problems extracted and converted!")
-    return problems
-
-
-def fetch_aops_problem_set(year: int, wiki_name: str) -> list:
-    """
-    Construct problem page URL, request content, and extract problem array.
-
-    Args:
-        year (int): Year of contest.
-        wiki_name (str): Wiki target category string.
-
-    Returns:
-        list: A list of extracted problem HTML snippets.
-    """
-    page = f"{year}_{wiki_name.replace(' ', '_')}_Problems"
-    raw_wikitext = fetch_aops_page(page)
-    problems = extract_problems_from_html(raw_wikitext)
-
-    print(f"Fetched {len(problems)} problems from AoPS Wiki for {year} {wiki_name}.")
-    return problems
-
-
-# ============================================================
-# HTML Transformation & Document Prep
-# ============================================================
-
 def convert_aops_html(aops_html: str) -> str:
-    """
-    Transform AoPS HTML tags, convert image math formulas to LaTeX inline/display tags,
-    and attach utility classes for styling.
-
-    Args:
-        aops_html (str): Raw problem snippet HTML.
-
-    Returns:
-        str: Converted HTML string with LaTeX markup inline.
-    """
+    """Convert AoPS image tags into inline and display KaTeX markup."""
     soup = BeautifulSoup(aops_html, "html.parser")
 
     for img in soup.find_all("img"):
@@ -266,63 +178,78 @@ def convert_aops_html(aops_html: str) -> str:
 
     return str(soup)
 
+def extract_problems_from_html(raw_wikitext: str) -> list:
+    """Extract individual problem snippets and convert LaTeX math tags."""
+    soup = BeautifulSoup(raw_wikitext, "html.parser")
+    problems = []
 
-# ============================================================
-# HTML document
-# ============================================================
+    first_h3 = soup.find("h3")
+    h3_text = ""
+
+    if first_h3:
+        tags = []
+        curr = first_h3.previous_sibling
+
+        while curr:
+            if "Problems" in curr.text:
+                break
+            tags.insert(0, str(curr))
+            curr = curr.previous_sibling
+
+        h3_text = "".join(tags)
+
+    for header in soup.find_all(["h2", "h3"]):
+        headline = header.find(class_="mw-headline")
+
+        if headline and "problem" in headline.get("id", "").lower():
+            content = [str(header)]
+
+            if header.name == "h3":
+                content.append(h3_text)
+
+            curr = header.next_sibling
+            while curr:
+                if curr.name in ["h2", "h3"]:
+                    break
+
+                if header.name == "h2" and first_h3:
+                    # Check if curr is one of the intro elements or contains the intro text
+                    if "Problems" in curr.text:
+                        break
+
+                if curr.name == "p" and curr.find("a", string=re.compile(r"Solution", re.I)):
+                    curr.a.decompose()
+
+                content.append(str(curr))
+                curr = curr.next_sibling
+
+            problems.append("".join(content))
+
+    return problems
+
+async def fetch_aops_problem_set(year: int, wiki_title: str) -> list:
+    """Fetch problem page HTML and parse into a list of problem snippets."""
+    page = f"{year}_{wiki_title}_Problems"
+    raw_wikitext = await fetch_aops_page(page)
+    return extract_problems_from_html(raw_wikitext)
 
 def create_html_document(body_html: str) -> str:
-
     return f"""<!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
         <title>AoPS Problem</title>
 
-        <!-- Computer Modern -->
-        <link
-            rel="stylesheet"
-            type="text/css"
-            href="https://cdn.jsdelivr.net/gh/dreampulse/computer-modern-web-font@master/fonts.css"
-        >
+        <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/gh/dreampulse/computer-modern-web-font@master/fonts.css">
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.18.5/dist/katex.min.css">
 
-        <!-- KaTeX -->
-        <link
-            rel="stylesheet"
-            href="https://cdn.jsdelivr.net/npm/katex@0.18.5/dist/katex.min.css"
-            integrity="sha384-2dNi/m6JtSiviznrOIZ5fTiZ5As0In2QwkuXSgoqcQtCNplvJAbt+jveeN+8en73"
-            crossorigin="anonymous"
-        >
-
-        <script
-            defer
-            src="https://cdn.jsdelivr.net/npm/katex@0.18.5/dist/katex.min.js"
-            integrity="sha384-TTF8eEsEKInX2meLzP5V1z/npGYIElXYGksx93f0qBZHu6IL3PdzVB8objytx+TR"
-            crossorigin="anonymous">
-        </script>
-
-        <script
-            defer
-            src="https://cdn.jsdelivr.net/npm/katex@0.18.5/dist/contrib/auto-render.min.js"
-            integrity="sha384-bjyGPfbij8/NDKJhSGZNP/khQVgtHUE5exjm4Ydllo42FwIgYsdLO2lXGmRBf5Mz"
-            crossorigin="anonymous"
-            onload="renderMathInElement(document.body);">
-        </script>
+        <script defer src="https://cdn.jsdelivr.net/npm/katex@0.18.5/dist/katex.min.js"></script>
+        <script defer src="https://cdn.jsdelivr.net/npm/katex@0.18.5/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body);"></script>
 
         <style>
-
-            * {{
-                box-sizing: border-box;
-            }}
-
-            html, body {{
-                margin: 0;
-                padding: 0;
-                background: #ffffff;
-            }}
-
+            * {{ box-sizing: border-box; }}
+            html, body {{ margin: 0; padding: 0; background: #ffffff; }}
             body {{
                 width: 900px;
                 padding: 32px 42px;
@@ -332,184 +259,112 @@ def create_html_document(body_html: str) -> str:
                 font-size: 20px;
                 line-height: 1.45;
             }}
-
-            h2 {{
-                margin: 0 0 18px 0;
-                padding: 0 0 8px 0;
-                font-size: 25px;
-                font-weight: bold;
-                line-height: 1.25;
-                border-bottom: 1px solid #cccccc;
-            }}
-
-            h3, h4 {{
-                margin-top: 1em;
-                margin-bottom: 0.5em;
-            }}
-
-            p {{
-                margin: 0 0 0.75em 0;
-            }}
-
-            .katex {{
-                font-size: 1.05em;
-            }}
-
-            .katex-display {{
-                margin: 0.75em 0;
-            }}
-
-            img {{
-                max-width: 100%;
-                height: auto;
-            }}
-
-            img.aops-block-image {{
-                display: block;
-                max-width: 90%;
-                height: auto;
-                margin: 14px auto;
-            }}
-
-            ul, ol {{
-                margin-top: 0.4em;
-                margin-bottom: 0.7em;
-                padding-left: 1.4em;
-            }}
-
-            li {{
-                margin-bottom: 0.15em;
-            }}
-
-            table {{
-                border-collapse: collapse;
-                margin: 0.75em auto;
-            }}
-
-            td, th {{
-                padding: 4px 10px;
-            }}
-
-            .mw-editsection {{
-                display: none;
-            }}
-
-            a {{
-                color: inherit;
-                text-decoration: none;
-            }}
-
+            h2, h3 {{ margin: 0 0 18px 0; padding: 0 0 8px 0; font-size: 25px; font-weight: bold; border-bottom: 1px solid #cccccc; }}
+            p {{ margin: 0 0 0.75em 0; }}
+            .katex {{ font-size: 1.05em; }}
+            .katex-display {{ margin: 0.75em 0; }}
+            img {{ max-width: 100%; height: auto; }}
+            img.aops-block-image {{ display: block; max-width: 90%; height: auto; margin: 14px auto; }}
+            ul, ol {{ margin-top: 0.4em; margin-bottom: 0.7em; padding-left: 1.4em; }}
+            table {{ border-collapse: collapse; margin: 0.75em auto; }}
+            td, th {{ padding: 4px 10px; }}
+            .mw-editsection {{ display: none; }}
+            a {{ color: inherit; text-decoration: none; }}
         </style>
     </head>
-
     <body>
-
         {body_html}
-
     </body>
     </html>"""
 
-def fetch_raw_wikitext(page_title: str) -> str:
-    # url = "https://artofproblemsolving.com/wiki/api.php"
-    #
-    # scraper = cloudscraper.create_scraper()
-    #
-    # params = {
-    #     "action": "parse",
-    #     "page": page_title,
-    #     "format": "json",
-    #     "prop": "text",
-    #     "disablelimitreport": True,
-    # }
-    #
-    # response = scraper.get(url=url, params=params)
-    # response.raise_for_status()
-    #
-    # #print(response.url)
-    #
-    # data = response.json()
-    #
-    # print("Fetched html!")
-    # return data.get("parse", {}).get("text", {}).get("*", "")
 
-    url = f"https://artofproblemsolving.com/wiki/index.php?title={page_title}"
-    # scraper = cloudscraper.create_scraper()
-    #
-    # response = scraper.get(url)
-    response = requests.get(url, impersonate="chrome")
-    response.raise_for_status()
+async def render_problem(semaphore, context, html: str, output_path: str, problem_id: str):
+    """Render a single problem into PNG format if the output file does not already exist."""
+    if os.path.exists(output_path):
+        return
 
-    print(f"Fetched AoPS page: {page_title}")
-    return response.text
-
-def extract_problems_from_html(raw_wikitext: str) -> list:
-    soup = BeautifulSoup(raw_wikitext, "html.parser")
-    problems = []
-
-    # Find problem headers (h2)
-    for header in soup.find_all("h2"):
-        headline = header.find(class_="mw-headline")
-        if headline and "problem" in headline.get("id").lower():
-            content = [str(header)]
-            curr = header.next_sibling
-            while curr:
-                if curr.name == "h2":
-                    break
-                if curr.name == "p" and curr.find("a", string=re.compile(r"Solution", re.I)):
-                    curr.a.decompose()
-                content.append(str(curr))
-                curr = curr.next_sibling
-            problems.append("".join(content))
-
-    # convert
-    problems = [convert_aops_html(problem) for problem in problems]
-
-    print("Problems extracted and converted!")
-    return problems
-
-def fetch_all_problems(year: int, wiki_name: str) -> list:
-    page_title = f"{year}_{wiki_name}_Problems"
-
-    raw_wikitext = fetch_raw_wikitext(page_title)
-
-    problems = extract_problems_from_html(raw_wikitext)
-
-    return problems
-
-async def render_problem(semaphore, context, html: str, output_path: str, id: int):
     async with semaphore:
+        # Double-check file existence in case another task rendered it while waiting on semaphore
+        if os.path.exists(output_path):
+            return
+
         page = await context.new_page()
+        try:
+            formatted_html = convert_aops_html(html)
+            document = create_html_document(formatted_html)
 
-        document = create_html_document(html)
+            await page.set_content(document, wait_until="domcontentloaded")
 
-        await page.set_content(document)
+            await page.locator("body").screenshot(path=output_path)
+            print(f"Successfully rendered problem id: {problem_id}!")
 
-        await page.locator("body").screenshot(path=output_path)
+        except Exception as e:
+            print(f"Failed to render problem id {problem_id}: {e}")
+        finally:
+            await page.close()
 
-        await page.close()
 
-        with sqlite3.connect("math_problems.db") as conn:
-            conn.execute("UPDATE math_problems SET rendered = 1 WHERE id = ?", (id,))
-        print(f"Successfully rendered problem id: {id}!")
-
-async def render_problems():
-    print("Starting...")
-
+async def render_all_problems(scraper_finished_event: asyncio.Event = None):
+    """Poll database for records and render missing problem images, exiting when all target image files exist."""
+    print("Starting Playwright image renderer...")
     os.makedirs("renders", exist_ok=True)
+
+    in_flight = set()
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(viewport={"width": 900, "height": 800}, device_scale_factor=2)
-        semaphore = asyncio.Semaphore(10)
+        semaphore = asyncio.Semaphore(4)
 
-        with sqlite3.connect("math_problems.db") as conn:
-            rows = conn.execute("SELECT question_statement, image_path, id FROM math_problems WHERE rendered = 0").fetchall()
+        while True:
+            with sqlite3.connect("math_problems.db") as conn:
+                rows = conn.execute("SELECT question_statement, image_path, id FROM math_problems").fetchall()
 
-        tasks = [render_problem(semaphore, context, html=row[0], output_path=row[1], id=row[2]) for row in rows]
-        await asyncio.gather(*tasks)
+            # Filter for problems where the output PNG does not exist on disk and is not currently rendering
+            unrendered_rows = [
+                row for row in rows
+                if not os.path.exists(row[1]) and row[2] not in in_flight
+            ]
+
+            for html, output_path, problem_id in unrendered_rows:
+                in_flight.add(problem_id)
+
+                async def task_wrapper(h=html, op=output_path, pid=problem_id):
+                    try:
+                        await render_problem(semaphore, context, h, op, pid)
+                    finally:
+                        in_flight.remove(pid)
+
+                asyncio.create_task(task_wrapper())
+
+            # Check if all image files exist on disk
+            all_exist = all(os.path.exists(row[1]) for row in rows) if rows else False
+
+            # Exit condition: every target file exists on disk and no tasks are active in flight
+            if all_exist and not in_flight:
+                break
+
+            await asyncio.sleep(1)
 
         await browser.close()
-        print("Done!")
+        print("Done rendering all problems!")
+
+# async def render_specific_problem(problem_id: int):
+#     with sqlite3.connect("math_problems.db") as conn:
+#         row = conn.execute("SELECT question_statement, image_path FROM math_problems WHERE id = ?", (problem_id,)).fetchone()
+#
+#     async with async_playwright() as p:
+#         browser = await p.chromium.launch(headless=True)
+#         context = await browser.new_context(viewport={"width": 900, "height": 800}, device_scale_factor=2)
+#         semaphore = asyncio.Semaphore(1)
+#
+#         task = render_problem(semaphore, context, html=row[0], output_path=row[1], id=problem_id)
+#
+#         await asyncio.gather(task)
+#
+#         await browser.close()
+#         print("Done!")
+
 
 if __name__ == "__main__":
-    asyncio.run(render_problems())
+    asyncio.run(render_all_problems())
