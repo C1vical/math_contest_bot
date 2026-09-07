@@ -6,7 +6,7 @@ from database import create_database, add_problem, get_loaded_contests
 from constants import CONTEST_REGISTRY, get_contest_info
 from logger_config import get_file_logger
 
-logger = get_file_logger("parsing", "parsing.log")
+logger = get_file_logger("parsing", "logs/parsing.log")
 
 async def load_contest(year: int, contest: str):
     """Fetch a full problem set for a contest year from AoPS and store in SQLite."""
@@ -40,16 +40,16 @@ async def prepare_database_and_renders():
     scraper_done_event = asyncio.Event()
 
     async def run_scraper():
-        logger.info("Starting problem scraper...")
+        print("Starting problem scraper...")
         await load_all_contests()
-        logger.info("Scraper completed all contests.")
+        print("Scraper completed all contests.")
         scraper_done_event.set()
 
     await asyncio.gather(
         run_scraper(),
         render_all_problems(scraper_finished_event=scraper_done_event),
     )
-    logger.info("Done preparing database and rendering images.")
+    print("Done preparing database and rendering images.")
 
 if __name__ == "__main__":
     asyncio.run(prepare_database_and_renders())

@@ -6,7 +6,7 @@ from aops_parser import convert_aops_html
 from constants import DATABASE
 from logger_config import get_file_logger
 
-logger = get_file_logger("renderer", "renderer.log")
+logger = get_file_logger("renderer", "logs/renderer.log")
 
 def create_html_document(body_html: str) -> str:
     return f"""<!DOCTYPE html>
@@ -74,7 +74,7 @@ async def render_problem(semaphore, context, html: str, output_path: str, proble
 
 async def render_all_problems(scraper_finished_event: asyncio.Event = None):
     """Poll database for records and render missing problem images."""
-    logger.info("Starting Playwright image renderer...")
+    print("Starting image renderer...")
     os.makedirs("renders", exist_ok=True)
     in_flight = set()
 
@@ -87,10 +87,7 @@ async def render_all_problems(scraper_finished_event: asyncio.Event = None):
             with sqlite3.connect(DATABASE) as conn:
                 rows = conn.execute("SELECT question_statement, image_path, id FROM math_problems").fetchall()
 
-            unrendered_rows = [
-                row for row in rows
-                if not os.path.exists(row[1]) and row[2] not in in_flight
-            ]
+            unrendered_rows = [row for row in rows if not os.path.exists(row[1]) and row[2] not in in_flight]
 
             for html, output_path, problem_id in unrendered_rows:
                 in_flight.add(problem_id)
@@ -103,8 +100,7 @@ async def render_all_problems(scraper_finished_event: asyncio.Event = None):
 
                 asyncio.create_task(task_wrapper())
 
-            all_exist = all(os.path.exists(row[1]) for row in rows) if rows else False
-            if all_exist and not in_flight:
+            if not in_flight and scraper_finished_event.is_set() and not unrendered_rows:
                 break
 
             await asyncio.sleep(1)

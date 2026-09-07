@@ -2,10 +2,10 @@ import asyncio
 import re
 from bs4 import BeautifulSoup
 from curl_cffi import requests
-from playwright.async_api import async_playwright
 from logger_config import get_file_logger
+import random
 
-logger = get_file_logger("parsing", "parsing.log")
+logger = get_file_logger("parsing", "logs/parsing.log")
 
 def extract_latex(text: str) -> str:
     """Clean HTML entities, strip delimiters, and normalize macros for KaTeX."""
@@ -42,51 +42,61 @@ def normalize_image_url(img):
     if src and src.startswith("//"):
         img["src"] = "https:" + src
 
-async def fetch_aops_page(page_title: str, max_retries: int = 3) -> str:
-    """Fetch raw HTML content from an AoPS wiki page with retries."""
+async def fetch_aops_page(page_title: str, max_retries: int = 4) -> str:
+    """Fetch raw HTML content from an AoPS wiki page using curl_cffi with exponential jitter backoff."""
     url = f"https://artofproblemsolving.com/wiki/index.php?title={page_title}"
 
     for attempt in range(1, max_retries + 1):
         try:
             async with requests.AsyncSession() as session:
-                response = await session.get(url, impersonate="chrome", timeout=10)
+                response = await session.get(url, impersonate="chrome", timeout=12)
+
+            # Handle 429 Rate Limits
+            if response.status_code == 429:
+                retry_after = response.headers.get("Retry-After")
+
+                if retry_after and retry_after.isdigit():
+                    backoff = int(retry_after) + random.uniform(0.5, 1.5)
+                else:
+                    # Exponential backoff + jitter (Attempt 1: ~2.5s, 2: ~4.5s, 3: ~8.5s, 4: ~16.5s)
+                    backoff = (2 ** attempt) + random.uniform(0.5, 2.0)
+
+                logger.warning(
+                    f"Rate limited (429) on {page_title} (Attempt {attempt}/{max_retries}). "
+                    f"Backing off for {backoff:.2f}s..."
+                )
+                await asyncio.sleep(backoff)
+                continue
+
             response.raise_for_status()
             logger.info(f"Fetched AoPS page: {page_title}")
             return response.text
+
         except Exception as e:
-            if hasattr(e, "response") and getattr(e.response, "status_code", None) == 429:
-                logger.warning(f"Rate limited (429) on {page_title}. Backing off for 10s...")
-                await asyncio.sleep(10)
+            backoff = (2 ** attempt) + random.uniform(0.5, 2.0)
+            logger.warning(
+                f"Error fetching {page_title} (Attempt {attempt}/{max_retries}): {e}. "
+                f"Retrying in {backoff:.2f}s..."
+            )
+            await asyncio.sleep(backoff)
 
-            if attempt == max_retries:
-                logger.error(f"curl_cffi failed for {page_title}: {e}. Falling back to Playwright.")
-                return await fetch_aops_page_playwright(page_title)
-            await asyncio.sleep(attempt * 2)
+    # Cool-off period if all initial retries fail
+    logger.error(
+        f"All {max_retries} retries exhausted for {page_title}. "
+        f"Pausing program for 60 seconds before final attempt..."
+    )
+    await asyncio.sleep(60)
 
-    return ""
-
-async def fetch_aops_page_playwright(page_title: str) -> str:
-    """Fallback browser fetcher using Playwright."""
-    url = f"https://artofproblemsolving.com/wiki/index.php?title={page_title}"
-    logger.info(f"Falling back to Playwright for: {page_title}")
-
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            locale="en-US",
-        )
-        page = await context.new_page()
-        response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-
-        if response and response.status == 403:
-            logger.error(f"Playwright received 403 on {page_title}")
-            await browser.close()
-            return ""
-
-        content = await page.content()
-        await browser.close()
-        return content
+    # Final attempt post-cooldown
+    try:
+        async with requests.AsyncSession() as session:
+            response = await session.get(url, impersonate="chrome", timeout=12)
+        response.raise_for_status()
+        logger.info(f"Successfully fetched AoPS page after 1-minute cool-off: {page_title}")
+        return response.text
+    except Exception as e:
+        logger.error(f"Final attempt after 1-minute pause failed for {page_title}: {e}")
+        return ""
 
 def convert_aops_html(aops_html: str) -> str:
     """Convert AoPS image tags into inline and display KaTeX markup."""
