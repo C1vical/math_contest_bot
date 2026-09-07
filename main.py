@@ -6,14 +6,13 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
-from database import get_problem, prepare_database_and_renders
+from database import get_problem
+from scraper import prepare_database_and_renders
 
-# Load environment variables
 load_dotenv()
 token = os.getenv("DISCORD_TOKEN")
 channel_id = int(os.getenv("CHANNEL_ID"))
 
-# Setup logging
 handler = logging.FileHandler(filename='discord.log', encoding='utf-8', mode='w')
 
 intents = discord.Intents.default()
@@ -50,12 +49,9 @@ async def gimme(ctx, year, contest, question_number):
 
     image_path = problem[6]
 
-    # Send rendered PNG image
     file = discord.File(image_path, filename=os.path.basename(image_path))
     await ctx.send(file=file)
 
 if __name__ == "__main__":
-    # print("Initializing database and rendering images...")
     # asyncio.run(prepare_database_and_renders())
     bot.run(token, log_handler=handler, log_level=logging.DEBUG)
-
