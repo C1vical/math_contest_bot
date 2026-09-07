@@ -1,5 +1,4 @@
 discord.py
 python-dotenv
-cloudscraper
-playwright
 beautifulsoup4
+curl-cffi
