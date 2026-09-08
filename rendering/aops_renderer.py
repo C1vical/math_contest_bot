@@ -2,7 +2,7 @@ import asyncio
 import os
 import sqlite3
 from playwright.async_api import async_playwright
-from aops_parser import convert_aops_html
+from parsing.aops_parser import convert_aops_html
 from constants import DATABASE
 from logger_config import get_file_logger
 

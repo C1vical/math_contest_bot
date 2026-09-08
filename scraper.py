@@ -1,7 +1,7 @@
 import asyncio
 import random
-from aops_parser import fetch_aops_problem_set
-from aops_renderer import render_all_problems
+from parsing.aops_parser import fetch_aops_problem_set
+from rendering.aops_renderer import render_all_problems
 from database import create_database, add_problem, get_loaded_contests
 from constants import CONTEST_REGISTRY, get_contest_info
 from logger_config import get_file_logger
