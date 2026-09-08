@@ -1,8 +1,5 @@
 .idea/
 .env
 __pycache__/
-logs/discord.log
-logs/parsing.log
-logs/renderer.log
-math_problems.db
-renders
+data/
+logging/
