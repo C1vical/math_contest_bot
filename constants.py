@@ -1,4 +1,5 @@
-DATABASE = "math_problems.db"
+DATABASE = "data/math_problems.db"
+RENDERS_DIR = "data/renders"
 
 # Master Contest Registry
 # Format: "KEY": (AoPS_Wiki_Title, min_year, max_year, max_probs)
