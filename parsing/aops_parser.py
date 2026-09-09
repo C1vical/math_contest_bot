@@ -16,7 +16,8 @@ async def fetch_problem_html(page_title: str, max_retries: int = 4) -> str:
         "page": page_title,
         "format": "json",
         "prop": "text",
-        "disablelimitreport": 1,
+        "disablelimitreport": "",
+        "redirects": ""
     }
 
     for attempt in range(1, max_retries + 1):
