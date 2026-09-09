@@ -140,4 +140,4 @@ async def render_all_problems(scraper_finished_event: asyncio.Event = None):
             await asyncio.sleep(1)
 
         await browser.close()
-        logger.info("Done rendering all problems!")
+        print("Done rendering all problems!")
