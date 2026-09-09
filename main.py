@@ -7,13 +7,15 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 from database import get_problem
+from constants import RENDERS_DIR
+
 from scraper import prepare_database_and_renders
 
 load_dotenv()
 token = os.getenv("DISCORD_TOKEN")
 channel_id = int(os.getenv("CHANNEL_ID"))
 
-handler = logging.FileHandler(filename='logs/discord.log', encoding='utf-8', mode='w')
+handler = logging.FileHandler(filename='logging/discord.log', encoding='utf-8', mode='w')
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -47,7 +49,8 @@ async def gimme(ctx, year, contest, question_number):
         await ctx.send("Problem not found in database!")
         return
 
-    image_path = problem[6]
+    problem_id = problem[0]
+    image_path = os.path.join(RENDERS_DIR, f"{problem_id}.png")
 
     file = discord.File(image_path, filename=os.path.basename(image_path))
     await ctx.send(file=file)
