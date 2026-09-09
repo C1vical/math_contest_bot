@@ -108,7 +108,7 @@ async def render_all_problems(scraper_finished_event: asyncio.Event = None):
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(viewport={"width": 900, "height": 800}, device_scale_factor=2)
-        semaphore = asyncio.Semaphore(4)
+        semaphore = asyncio.Semaphore(1)
 
         while True:
             with sqlite3.connect(DATABASE) as conn:
