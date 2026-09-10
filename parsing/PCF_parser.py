@@ -5,63 +5,404 @@ import asyncio
 from playwright.async_api import async_playwright
 from url import extract_urls
 
-def fetch_raw_html() -> str:
+def fetch_raw_html(contest: str, year: str) -> str:
     urls = extract_urls()
-    url = urls[("Fermat", "2017")]
+    url = urls[(contest, year)]
     response = requests.get(url, impersonate="chrome")
     # response.raise_for_status()
     print(response.status_code)
-
     return response.text
 
 def extract_problems(raw_html: str) -> list[str]:
-    soup = BeautifulSoup(raw_html, "html.parser")
+    soup = BeautifulSoup(raw_html, "html5lib") # using html5lib will automatically fix broken tags, unlike normal html.parser
     problems = []
 
+    p = 1  # problem number
     for header in soup.find_all("h2", string=re.compile(r"Part [A-C]")):
-        header = header.find_next_sibling()
+        while header.name != "ol":
+            header = header.find_next_sibling()
         for child in header.children:
             if not child.name: # newline
                 continue
             elif child.name == "h2": # next section
                 break
             elif child.name == "li": # problem
-                problems.append(str(child).removeprefix("<li>").removesuffix("</li>"))
+                problems.append(f"<h2>Problem {p}</h2>" + str(child).removeprefix("<li>").removesuffix("</li>"))
+                p += 1
             elif child.name == "ol": # other part of previous problem, don't append, instead add to previous
                 problems[-1] = problems[-1] + str(child).removeprefix("<ol>").removesuffix("</ol>")
     return problems
 
-def extract_head(raw_html: str) -> str:
-    soup = BeautifulSoup(raw_html, "html.parser")
-    return str(soup.find("head"))
-
-def create_html_document(head_html: str, body_html: str) -> str:
-    return f"""
-    <!DOCTYPE html>
+def create_html_document(body_html: str) -> str:
+    return f"""<!DOCTYPE html>
     <html lang="en">
-    {head_html}
+
+    <head>
+        <meta charset="utf-8" />
+        <meta content="pandoc" name="generator" />
+        <meta content="width=device-width, initial-scale=1.0, user-scalable=yes" name="viewport" />
+
+        <title>parser</title>
+
+        <link
+            rel="stylesheet"
+            type="text/css"
+            href="https://cdn.jsdelivr.net/gh/dreampulse/computer-modern-web-font@master/fonts.css"
+        />
+
+        <style type="text/css">
+            html,
+            body {{
+                margin: 0;
+                padding: 0;
+                background: #ffffff;
+            }}
+            
+            html {{
+                line-height: 1.45;
+                font-family: "Computer Modern Serif";
+                font-size: 20px;
+                color: #171717;
+                background-color: #fdfdfd;
+            }}
+
+            body {{
+                max-width: 960px;
+                padding: 32px 42px;
+                hyphens: auto;
+                word-wrap: normal;
+                text-rendering: optimizeLegibility;
+                font-kerning: normal;
+                counter-set: list;
+            }}
+
+            @media (max-width: 720px) {{
+                body {{
+                    font-size: 16px;
+                    padding: 1em;
+                }}
+            }}
+
+            @media print {{
+                body {{
+                    background-color: transparent;
+                    color: black;
+                    font-size: 12pt;
+                }}
+
+                p,
+                h2,
+                h3 {{
+                    orphans: 3;
+                    widows: 3;
+                }}
+
+                h2,
+                h3,
+                h4 {{
+                    page-break-after: avoid;
+                }}
+            }}
+
+            p {{
+                margin: 0 0 0.75em 0;
+            }}
+
+            a {{
+                color: inherit;
+                text-decoration: none;
+            }}
+
+            a:visited {{
+                color: #008094;
+                text-decoration: underline;
+            }}
+
+            a:hover {{
+                color: #004752;
+                text-decoration: underline;
+            }}
+
+            img {{
+                max-width: 100%;
+                min-width: 320px;
+            }}
+
+            .center {{
+                text-align: center;
+            }}
+
+            .static {{
+                max-width: 100%;
+                min-width: 0%;
+            }}
+
+            h3 {{
+                font-size: 1.1em;
+            }}
+
+            ol,
+            ul {{
+                padding-left: 1.7em;
+                margin-top: 1em;
+            }}
+
+            li > ol,
+            li > ul {{
+                margin-top: 0;
+            }}
+
+            blockquote {{
+                margin: 1em 0 1em 1.7em;
+                padding-left: 1em;
+                border-left: 2px solid #e6e6e6;
+                color: #575757;
+            }}
+
+            code {{
+                font-family: Menlo, Monaco, 'Lucida Console', Consolas, monospace;
+                font-size: 85%;
+                margin: 0;
+                white-space: pre-wrap;
+            }}
+
+            pre {{
+                margin: 1em 0;
+                overflow: auto;
+            }}
+
+            pre code {{
+                padding: 0;
+                overflow: visible;
+            }}
+
+            .sourceCode {{
+                background-color: transparent;
+                overflow: visible;
+            }}
+
+            hr {{
+                background-color: #1a1a1a;
+                border: none;
+                height: 1px;
+                margin: 1em 0;
+            }}
+
+            table {{
+                margin-left: auto;
+                margin-right: auto;
+                border-collapse: collapse;
+                overflow-x: hidden;
+                font-variant-numeric: lining-nums tabular-nums;
+            }}
+
+            table caption {{
+                margin-bottom: 0.75em;
+            }}
+
+            tbody {{
+                margin-top: 0.5em;
+                border-bottom: 1px solid #1a1a1a;
+            }}
+
+            th {{
+                border-top: 1px solid #1a1a1a;
+                padding: 0.25em 0.5em;
+                border: 1px solid #808080;
+            }}
+
+            td {{
+                padding: 0.125em 0.5em 0.25em;
+                border: 1px solid #808080;
+            }}
+
+            header {{
+                margin-bottom: 4em;
+                text-align: center;
+            }}
+
+            #TOC li {{
+                list-style: none;
+            }}
+
+            #TOC a:not(:hover) {{
+                text-decoration: none;
+            }}
+
+            span.smallcaps {{
+                font-variant: small-caps;
+            }}
+
+            span.underline {{
+                text-decoration: underline;
+            }}
+
+            div.hanging-indent {{
+                margin-left: 1.5em;
+                text-indent: -1.5em;
+            }}
+
+            ul.task-list {{
+                list-style: none;
+            }}
+
+            h1 {{
+                text-align: center;
+                font-size: 34px;
+            }}
+
+            h2 {{
+                margin: 0 0 18px 0;
+                padding: 0 0 8px 0;
+                font-size: 25px;
+                font-weight: bold;
+                line-height: 1.25;
+                border-bottom: 1px solid #cccccc;
+            }}
+
+            .images {{
+                width: 100%;
+                margin: 0 auto;
+            }}
+
+            .block {{
+                width: 200px;
+                display: inline-block;
+            }}
+
+            .infobox {{
+                border-style: solid;
+                padding: 10px;
+            }}
+
+            #highlight {{
+                background-color: lightgrey;
+                border-radius: 25px;
+                padding: 10px;
+                border: 2px solid black;
+            }}
+
+            ol.nostyle li {{
+                list-style-type: none;
+            }}
+
+            ol.mc {{
+                counter-reset: list list-item;
+            }}
+
+            ol.mc li {{
+                list-style: none;
+                padding: 7px 0;
+            }}
+
+            ol.mc li:before {{
+                content: " (" counter(list, upper-alpha) ") ";
+                counter-increment: list;
+            }}
+
+            ol.horizontal {{
+                width: 100%;
+                counter-reset: list list-item;
+                display: flex;
+                justify-content: flex-start;
+                align-items: baseline;
+                flex-wrap: wrap;
+            }}
+
+            ol.horizontal li {{
+                list-style: none;
+                width: 185px;
+                padding: 2px 0;
+            }}
+
+            ol.horizontal li:before {{
+                content: " (" counter(list, upper-alpha) ") ";
+                counter-increment: list;
+            }}
+
+            button {{
+                border-radius: 8px;
+                background-color: #00BDDA;
+                border: 0;
+                border-bottom: 2px solid #1a1a1a;
+                color: #1a1a1a;
+                padding: 8px;
+                text-align: center;
+                text-decoration: none;
+                display: inline-block;
+                font-size: 16px;
+            }}
+
+            button:hover {{
+                background-color: #008094;
+                border-bottom-color: #008094;
+                color: #fdfdfd;
+            }}
+
+            hr.longdesc {{
+                background-color: #fdfdfd;
+                border-top: dashed 1px #1a1a1a;
+            }}
+
+            .column-five {{
+                float: left;
+                width: 20%;
+            }}
+
+            .column-three {{
+                float: left;
+                width: 33%;
+            }}
+
+            .row:after {{
+                content: "";
+                display: table;
+                clear: both;
+            }}
+
+            @media screen and (max-width: 960px) {{
+                .column-three {{
+                    width: 100%;
+                }}
+
+                .column-five {{
+                    width: 50%;
+                }}
+            }}
+        </style>
+
+        <script
+            src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js"
+            type="text/javascript"
+        ></script>
+
+        <!--[if lt IE 9]>
+        <script src="//cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.3/html5shiv-printshiv.min.js"></script>
+        <![endif]-->
+    </head>
+
     <body>
-    {body_html}
+        {body_html}
     </body>
+
     </html>
     """
 
-async def render(semaphore, context, raw_html: str, problem: str, num: int):
+async def render(semaphore, context, problem: str, num: int):
     async with semaphore:
         page = await context.new_page()
 
-        head = extract_head(raw_html)
-        document = create_html_document(head, problem)
+        document = create_html_document(problem)
 
         await page.set_content(document)
 
-        output_path = f"PCF_renders/{num}.png"
+        output_path = f"../PCF_renders/{num}.png"
         await page.locator("body").screenshot(path=output_path)
 
         await page.close()
         print(f"Rendered problem {num}!")
 
-async def render_problems():
+async def render_problems(contest: str, year: str):
     print("Rendering problems...")
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -69,24 +410,15 @@ async def render_problems():
         context = await browser.new_context(device_scale_factor=2)
         semaphore = asyncio.Semaphore(8)
 
-        raw = fetch_raw_html()
+        raw = fetch_raw_html(contest, year)
         problems = extract_problems(raw)
         print(len(problems))
 
-        tasks = [render(semaphore, context, raw, problem, num) for num, problem in enumerate(problems, start=1)]
+        tasks = [render(semaphore, context, problem, num) for num, problem in enumerate(problems, start=1)]
         await asyncio.gather(*tasks)
 
         await browser.close()
         print("Done rendering!")
 
 if __name__ == "__main__":
-    asyncio.run(render_problems())
-
-    # raw = fetch_raw_html()
-    # problems = extract_problems(raw)
-    #
-    # print(len(problems))
-    # # print(problems)
-    # for problem in problems:
-    #     print(problems)
-    # print(len(problems))
+    asyncio.run(render_problems(contest="Cayley", year="2023"))
