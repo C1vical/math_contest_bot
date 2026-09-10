@@ -24,33 +24,44 @@ async def load_contest(year: int, contest: str, loaded_problems: set):
     info = get_contest_info(year, contest)
     wiki_title, _, _, max_probs = info
 
-    missing_problems = [
-        p for p in range(1, max_probs + 1)
-        if (year, contest, p) not in loaded_problems
-    ]
+    missing_problems = [ p for p in range(1, max_probs + 1) if (year, contest, p) not in loaded_problems]
 
     if not missing_problems:
-        logger.info(f"Already loaded {year} {contest} ({max_probs} problems)")
+        logger.info(f"Already loaded {year} {contest}")
         return
 
+    logger.info(f"Attempting to load {year} {contest} ({len(missing_problems)} missing problems):")
+
+    successful_count = 0
+    unsuccessful_problem_num = []
+
     for problem_num in missing_problems:
-        await load_problem(year, contest, wiki_title, problem_num, loaded_problems)
+        success = await load_problem(year, contest, wiki_title, problem_num, loaded_problems)
+        if success:
+            successful_count += 1
+        else:
+            unsuccessful_problem_num.append(problem_num)
 
-    logger.info(f"Finished loading {len(missing_problems)} missing problems for {year} {contest}")
+    if successful_count == len(missing_problems):
+        logger.info(f"Finished loading all {successful_count} missing problems for {year} {contest}")
+    else:
+        logger.warning(
+            f"{year} {contest}: {successful_count} loaded successfully. "
+            f"Failed to load {len(unsuccessful_problem_num)} problem(s): {unsuccessful_problem_num}"
+        )
 
-async def load_problem(year: int, contest: str, wiki_title: str, problem_num: int, loaded_problems: set):
-    """Fetch a single problem statement and save it to SQLite."""
+async def load_problem(year: int, contest: str, wiki_title: str, problem_num: int, loaded_problems: set) -> bool:
+    """Fetch a single problem statement and save it to SQLite. Returns True on success."""
     question_statement = await fetch_problem_statement(year, wiki_title, problem_num)
 
     if not question_statement:
-        logger.warning(f"Failed to load {year} {contest} Problem {problem_num}")
-        return
+        return False
 
     add_problem(year, contest, problem_num, question_statement)
     loaded_problems.add((year, contest, problem_num))
-    logger.info(f"Successfully loaded {year} {contest} Problem {problem_num}")
 
     await asyncio.sleep(random.uniform(1.8, 3.2))
+    return True
 
 async def prepare_database_and_renders():
     """Creates database and runs scraper and renderer concurrently."""
