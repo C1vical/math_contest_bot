@@ -1,5 +1,6 @@
+import os
 import sqlite3
-from constants import DATABASE, CONTEST_REGISTRY, generate_problem_id
+from constants import DATABASE, RENDERS_DIR, CONTEST_REGISTRY, generate_problem_id
 
 def create_database():
     """Create the SQLite database and table schema if it does not already exist."""
@@ -35,6 +36,18 @@ def add_problem(year: int, contest: str, q_num: int, statement: str, answer: str
             (problem_id, year, contest, q_num, statement, str(answer)),
         )
 
+def remove_problem(year: int, contest: str, q_num: int):
+    """Remove a math problem from the SQLite database."""
+    problem_id = generate_problem_id(year, contest, q_num)
+
+    with sqlite3.connect(DATABASE) as conn:
+        cursor = conn.execute(
+            "DELETE FROM math_problems WHERE id = ?", (problem_id,)
+        )
+
+    render_path = os.path.join(RENDERS_DIR, f"{problem_id}.png")
+    os.remove(render_path)
+
 def is_edge_case_skipped(year: int, contest: str) -> bool:
     """Check if a given contest year is a known historical skip/gap year."""
     return (year == 2021 and contest == "AMC8") or (year == 1980 and contest == "IMO")
@@ -58,3 +71,17 @@ def get_loaded_problems() -> set:
                     loaded_problems.add((year, contest, q_num))
 
     return loaded_problems
+
+def get_contest_count():
+    num_problems = 0
+    with sqlite3.connect(DATABASE) as conn:
+        cursor = conn.execute(
+            "SELECT contest, COUNT(*) FROM math_problems GROUP BY contest ORDER BY contest"
+        )
+        for contest, count in cursor.fetchall():
+            print(f"{contest}: {count}")
+            num_problems += count
+    print(f"Total problems: {num_problems}")
+
+if __name__ == "__main__":
+    get_contest_count()
