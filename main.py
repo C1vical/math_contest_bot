@@ -9,8 +9,6 @@ from dotenv import load_dotenv
 from database import get_problem
 from constants import RENDERS_DIR
 
-from scraper import prepare_database_and_renders
-
 load_dotenv()
 token = os.getenv("DISCORD_TOKEN")
 channel_id = int(os.getenv("CHANNEL_ID"))
@@ -56,5 +54,4 @@ async def gimme(ctx, year, contest, question_number):
     await ctx.send(file=file)
 
 if __name__ == "__main__":
-    # asyncio.run(prepare_database_and_renders())
     bot.run(token, log_handler=handler, log_level=logging.DEBUG)
