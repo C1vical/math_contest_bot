@@ -48,6 +48,8 @@ def remove_problem(year: int, contest: str, q_num: int):
     render_path = os.path.join(RENDERS_DIR, f"{problem_id}.png")
     os.remove(render_path)
 
+    print(f"Removed problem {problem_id} from database.")
+
 def is_edge_case_skipped(year: int, contest: str) -> bool:
     """Check if a given contest year is a known historical skip/gap year."""
     return (year == 2021 and contest == "AMC8") or (year == 1980 and contest == "IMO")
@@ -84,4 +86,6 @@ def get_contest_count():
     print(f"Total problems: {num_problems}")
 
 if __name__ == "__main__":
-    get_contest_count()
+    # get_contest_count()
+    remove_problem(2015, "USAJMO", 2)
+    remove_problem(2015, "USAJMO", 3)
