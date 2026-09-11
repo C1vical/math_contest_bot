@@ -78,7 +78,7 @@ def extract_problem_statement(raw_wikitext: str, year: int, contest: str, q_num:
     problem_statement = [custom_header]
 
     while curr:
-        if curr.name == "h2":
+        if curr.name in {"h1", "h2", "h3", "h4", "h5", "h6"}:
             break
         problem_statement.append(str(curr))
         curr = curr.next_sibling
