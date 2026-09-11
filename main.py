@@ -1,14 +1,17 @@
 import asyncio
+import io
+
 import logging
 import os
 import threading
+import aiohttp
 
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 from flask import Flask
 
-from constants import RENDERS_DIR
+from constants import RENDERS_DIR, R2_BUCKET_URL
 from database import get_problem
 
 # Render Keep Active
@@ -69,14 +72,31 @@ async def gimme(ctx, year, contest, question_number):
         return
 
     problem_id = problem[0]
-    image_path = os.path.join(RENDERS_DIR, f"{problem_id}.png")
 
-    if not os.path.exists(image_path):
-        await ctx.send("Problem found in database, but image render is missing!")
-        return
+    image_url = f"{R2_BUCKET_URL}/{problem_id}.png"
 
-    file = discord.File(image_path, filename=os.path.basename(image_path))
-    await ctx.send(file=file)
+    # Fetch image dynamically from Cloudflare R2
+    async with aiohttp.ClientSession() as session:
+        async with session.get(image_url) as resp:
+            if resp.status != 200:
+                await ctx.send(
+                    "Problem found in database, but image render is missing from R2!"
+                )
+                return
+
+            image_data = await resp.read()
+            file = discord.File(
+                io.BytesIO(image_data), filename=f"{problem_id}.png"
+            )
+            await ctx.send(file=file)
+    # image_path = os.path.join(RENDERS_DIR, f"{problem_id}.png")
+    #
+    # if not os.path.exists(image_path):
+    #     await ctx.send("Problem found in database, but image render is missing!")
+    #     return
+    #
+    # file = discord.File(image_path, filename=os.path.basename(image_path))
+    # await ctx.send(file=file)
 
 if __name__ == "__main__":
     bot.run(token)

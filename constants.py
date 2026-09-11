@@ -1,5 +1,7 @@
 from pathlib import Path
 
+R2_BUCKET_URL = "https://pub-c5ba57c8ddcb4baf8d2fc7de913627cf.r2.dev"
+
 BASE_DIR = Path(__file__).resolve().parent
 
 DATABASE = BASE_DIR / "data" / "math_problems.db"
