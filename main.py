@@ -1,19 +1,40 @@
 import asyncio
 import logging
 import os
+import threading
 
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
+from flask import Flask
 
-from database import get_problem
 from constants import RENDERS_DIR
+from database import get_problem
 
+# Render Keep Active
+app = Flask(__name__)
+
+@app.route("/")
+def health_check():
+    return "Bot is alive!", 200
+
+def run_http_server():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
+
+# Start Flask in a background daemon thread
+threading.Thread(target=run_http_server, daemon=True).start()
+
+# Discord Bot Configuration
 load_dotenv()
 token = os.getenv("DISCORD_TOKEN")
 channel_id = int(os.getenv("CHANNEL_ID"))
 
-handler = logging.FileHandler(filename='logging/discord.log', encoding='utf-8', mode='w')
+# Set up logging to stream directly to standard console for Render dashboard
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -50,8 +71,12 @@ async def gimme(ctx, year, contest, question_number):
     problem_id = problem[0]
     image_path = os.path.join(RENDERS_DIR, f"{problem_id}.png")
 
+    if not os.path.exists(image_path):
+        await ctx.send("Problem found in database, but image render is missing!")
+        return
+
     file = discord.File(image_path, filename=os.path.basename(image_path))
     await ctx.send(file=file)
 
 if __name__ == "__main__":
-    bot.run(token, log_handler=handler, log_level=logging.DEBUG)
+    bot.run(token)
