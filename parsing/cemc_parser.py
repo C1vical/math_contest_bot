@@ -17,8 +17,19 @@ def extract_problems(raw_html: str) -> list[str]:
     soup = BeautifulSoup(raw_html, "html5lib") # using html5lib will automatically fix broken tags, unlike normal html.parser
     problems = []
 
-    p = 1  # problem number
-    for header in soup.find_all("h2", string=re.compile(r"Part [A-C]")):
+    # get rid of all buttons (don't want them when rendering)
+    for button in soup.find_all("button"):
+        button.decompose()
+
+    p = 1  # problem numbers
+
+    # for PCF
+    headers = soup.find_all("h2", string=re.compile(r"(Part [A-C]|^Questions)"))
+
+    if not headers:
+        headers = [soup.find(class_="infobox")]
+
+    for header in headers:
         while header.name != "ol":
             header = header.find_next_sibling()
         for child in header.children:
@@ -421,4 +432,7 @@ async def render_problems(contest: str, year: str):
         print("Done rendering!")
 
 if __name__ == "__main__":
-    asyncio.run(render_problems(contest="Cayley", year="2023"))
+    while True:
+        contest = input("Enter contest: ")
+        year = input("Enter year: ")
+        asyncio.run(render_problems(contest=contest, year=year))
