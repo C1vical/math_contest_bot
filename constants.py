@@ -1,8 +1,14 @@
-DATABASE = "data/math_problems.db"
-RENDERS_DIR = "data/renders"
+from pathlib import Path
 
-# Master Contest Registry
-# Format: "KEY": (AoPS_Wiki_Title, min_year, max_year, max_probs)
+BASE_DIR = Path(__file__).resolve().parent
+
+DATABASE = BASE_DIR / "data" / "math_problems.db"
+RENDERS_DIR = BASE_DIR / "data" / "renders"
+
+RENDERS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Contest Registry
+# "KEY": (AoPS_Wiki_Title, min_year, max_year, max_probs)
 CONTEST_REGISTRY = {
     "AJHSME": ("AJHSME", 1985, 1998, 25),
     "AMC8": ("AMC_8", 1999, 2026, 25),
@@ -32,7 +38,6 @@ CONTEST_REGISTRY = {
 
 def get_contest_info(year: int, contest: str):
     """Finds the exact registry tuple for a contest and year"""
-
     if contest in CONTEST_REGISTRY:
         info = CONTEST_REGISTRY[contest]
         if info[1] <= year <= info[2]:
