@@ -1,8 +1,12 @@
 import logging
-
+import os
 
 def get_file_logger(name: str, log_file: str, level=logging.INFO) -> logging.Logger:
     """Configures a file-only logger that clears the log on each run and omits timestamps."""
+    log_dir = os.path.dirname(log_file)
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
+
     logger = logging.getLogger(name)
     logger.setLevel(level)
 
