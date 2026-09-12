@@ -4,3 +4,4 @@ beautifulsoup4
 curl-cffi
 flask
 aiohttp
+playwright
