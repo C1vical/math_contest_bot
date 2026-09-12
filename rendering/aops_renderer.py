@@ -1,8 +1,9 @@
 import asyncio
+import aiohttp
 import os
 import sqlite3
 from playwright.async_api import async_playwright
-from constants import DATABASE, RENDERS_DIR
+from constants import DATABASE, RENDERS_DIR, R2_BUCKET_URL
 from logger_config import get_file_logger
 
 logger = get_file_logger("renderer", "logging/renderer.log")
@@ -141,3 +142,12 @@ async def render_all_problems(scraper_finished_event: asyncio.Event = None):
 
         await browser.close()
         print("Done rendering all problems!")
+
+async def get_image_data(problem_id: str):
+    image_url = f"{R2_BUCKET_URL}/{problem_id}.png"
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(image_url) as resp:
+            image_data = await resp.read()
+            return image_data
+
