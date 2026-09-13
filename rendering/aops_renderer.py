@@ -14,8 +14,8 @@ def create_html_document(body_html: str) -> str:
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Page Title</title>
-        <!-- Computer Modern -->
+        <title>Problem Render</title>
+        <!-- Computer Modern Font-->
         <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/gh/dreampulse/computer-modern-web-font@master/fonts.css">
         <style>
         * {{
@@ -58,9 +58,9 @@ def create_html_document(body_html: str) -> str:
             height: auto;
         }}
 
-        .latexcenter, .mw-file-element {{
+        .latexcenter, .mw-file-element, .asy-image {{
             display: block;
-            max-width: 90%;
+            max-width: 100%;
             height: auto;
             margin: 14px auto;
         }}
@@ -89,8 +89,7 @@ async def render_problem(semaphore, context, html: str, output_path: str, proble
         try:
             document = create_html_document(html)
 
-            await page.set_content(document, wait_until="networkidle")
-            await page.evaluate("document.fonts.ready")
+            await page.set_content(document)
 
             await page.locator("body").screenshot(path=output_path)
             logger.info(f"Successfully rendered problem id: {problem_id}")
