@@ -36,7 +36,9 @@ async def fetch_category_data(page, collection_id):
         return await response.json();
     }""", [collection_id, session_id])
 
-async def fetch_item_ids(page) -> dict:
+async def save_item_ids_to_json(page, file_path):
+    await page.goto(base_url)
+
     ids = {}
     for contest, collection_id in contests.items():
         print(f"Fetching {contest}...")
@@ -47,8 +49,39 @@ async def fetch_item_ids(page) -> dict:
         for item in items:
             ids[f"{item['item_score']} {contest}"] = item["item_id"]
 
-    print(f"Fetched item ids successfully.")
-    return ids
+    print(f"Fetched item ids successfully. Now writing to file...")
+
+    # convert to json and write to file
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(ids, f, indent=4)
+
+async def extract_problems(page, file_path):
+    await page.goto(base_url)
+    with open("ids.json", "r") as f:
+        data = json.load(f)
+
+    # print(data)
+    problems = {}
+    for contest, collection_id in data.items():
+        print(f"Extracting problems for {contest}...")
+
+        response = await fetch_category_data(page, collection_id)
+        items = response.get("response", {}).get("category", {}).get("items", [])
+
+        for item in items:
+            if not item.get('item_text', {}).isdigit():
+                continue
+            name = f"{contest} Problem {item.get('item_text', {})}"
+            problems[name] = item.get("post_data", {}).get("post_rendered", {})
+
+        await asyncio.sleep(0.2) # limit to 5 requests per second, or we get blocked
+
+    print(f"Fetched problems successfully. Now writing to file...")
+
+    # convert to json and write to file
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(problems, f, indent=4)
+
 
 async def main():
     async with async_playwright() as p:
@@ -59,18 +92,10 @@ async def main():
         )
         page = await context.new_page()
 
-        await page.goto(base_url)
+        # await save_item_ids_to_json(page, "ids.json")
 
-        ids = await fetch_item_ids(page)
+        await extract_problems(page, "problems.json")
 
-        # convert to json and write to file
-        print("Writing to file...")
-        with open("ids.json", "w", encoding="utf-8") as f:
-            json.dump(ids, f, indent=4)
-
-        # for p in problems:
-        #     print(p["post_data"]["post_rendered"])
-        #     print("\n")
         await browser.close()
 
 if __name__ == "__main__":
