@@ -2,8 +2,8 @@ from patchright.async_api import async_playwright
 import asyncio
 import json
 
-test_url = "https://artofproblemsolving.com/community/"
-session_id = "21d6f40cfb511982e4424e0e250a9557"
+base_url = "https://artofproblemsolving.com/community/"
+session_id = "21d6f40cfb511982e4424e0e250a9557" # same ID for not logged in
 
 # contest and its AOPS collection id
 contests = {
@@ -12,9 +12,9 @@ contests = {
     "CMOQR": "3280"
 }
 
-async def fetch_aops_ajax(page, collection_id):
+async def fetch_category_data(page, collection_id):
     return await page.evaluate("""
-        async ([category_id, session_id]) => {
+        async ([collection_id, session_id]) => {
         const response = await fetch(
                 "https://artofproblemsolving.com/m/community/ajax.php",
                 {
@@ -23,7 +23,7 @@ async def fetch_aops_ajax(page, collection_id):
                         "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
                         "x-requested-with": "XMLHttpRequest"
                     },
-                    body: `category_id=${category_id}&a=fetch_category_data&aops_logged_in=false&aops_user_id=1&aops_session_id=${session_id}`,
+                    body: `category_id=${collection_id}&a=fetch_category_data&aops_logged_in=false&aops_user_id=1&aops_session_id=${session_id}`,
                     method: "POST",
                     credentials: "include"
                 }
@@ -36,36 +36,36 @@ async def fetch_aops_ajax(page, collection_id):
         return await response.json();
     }""", [collection_id, session_id])
 
+async def fetch_item_ids(page) -> dict:
+    ids = {}
+    for contest, collection_id in contests.items():
+        print(f"Fetching {contest}...")
+
+        response = await fetch_category_data(page, collection_id)
+        items = response.get("response", {}).get("category", {}).get("items", [])
+
+        for item in items:
+            ids[f"{item['item_score']} {contest}"] = item["item_id"]
+
+    print(f"Fetched item ids successfully.")
+    return ids
+
 async def main():
     async with async_playwright() as p:
+        print("Initializing session...")
         browser = await p.chromium.launch(headless=True, channel="chrome")
-        # page = await browser.new_page()
-
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
         )
-
         page = await context.new_page()
 
-        await page.goto(
-            test_url,
-            wait_until="networkidle"
-        )
+        await page.goto(base_url)
 
-        # await asyncio.sleep(10000)
-        ids = {}
-        for contest, collection_id in contests.items():
-            print(f"Fetching {contest}!")
-
-            res = await fetch_aops_ajax(page, collection_id)
-            items = res["response"]["category"]["items"]
-
-            for item in items:
-                name = f"{item["item_score"]} {contest}"
-                ids[name] = item["item_id"]
+        ids = await fetch_item_ids(page)
 
         # convert to json and write to file
-        with open("ids.json", "w") as f:
+        print("Writing to file...")
+        with open("ids.json", "w", encoding="utf-8") as f:
             json.dump(ids, f, indent=4)
 
         # for p in problems:
@@ -73,4 +73,5 @@ async def main():
         #     print("\n")
         await browser.close()
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
