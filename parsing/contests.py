@@ -48,7 +48,7 @@ def add_problems_for_contest(contest_year: str, contest_name: str, problems: lis
     data.setdefault(contest_name, {})
 
     # ensure not overwriting existing year
-    if contest_year not in data:
+    if contest_year in data:
         print(f"{contest_year} {contest_name} already exists")
         return
 
