@@ -82,7 +82,7 @@ async def extract_problems(page):
             else:
                 problems.append(item.get("post_data", {}).get("post_rendered", {}))
 
-        contest_year = contest.split("-")[0]
+        contest_year = contest.split(" ")[0]
         contest_name = contest.split(" ")[1]
         add_problems_for_contest(contest_year, contest_name, problems)
 
