@@ -4,9 +4,6 @@ from parsing.aops_parser import fetch_problem_statement
 from rendering.aops_renderer import render_all_problems
 from database import create_database, add_problem, get_loaded_problems
 from constants import CONTEST_REGISTRY, get_contest_info
-from logger_config import get_file_logger
-
-logger = get_file_logger("parsing", "logs/parsing.log")
 
 async def load_all_contests():
     """Iterate through all registered contests and fetch missing problem sets into SQLite."""
@@ -27,10 +24,10 @@ async def load_contest(year: int, contest: str, loaded_problems: set):
     missing_problems = [ p for p in range(1, max_probs + 1) if (year, contest, p) not in loaded_problems]
 
     if not missing_problems:
-        logger.info(f"Already loaded {year} {contest}")
+        print(f"Already loaded {year} {contest}")
         return
 
-    logger.info(f"Attempting to load {year} {contest} ({len(missing_problems)} missing problems):")
+    print(f"Attempting to load {year} {contest} ({len(missing_problems)} missing problems):")
 
     successful_count = 0
     unsuccessful_problem_num = []
@@ -43,9 +40,9 @@ async def load_contest(year: int, contest: str, loaded_problems: set):
             unsuccessful_problem_num.append(problem_num)
 
     if successful_count == len(missing_problems):
-        logger.info(f"Finished loading all {successful_count} missing problems for {year} {contest}")
+        print(f"Finished loading all {successful_count} missing problems for {year} {contest}")
     else:
-        logger.warning(
+        print(
             f"{year} {contest}: {successful_count} loaded successfully. "
             f"Failed to load {len(unsuccessful_problem_num)} problem(s): {unsuccessful_problem_num}"
         )

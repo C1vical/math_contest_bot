@@ -6,6 +6,7 @@ BASE_DIR = Path(__file__).resolve().parent
 
 DATABASE = BASE_DIR / "data" / "math_problems.db"
 RENDERS_DIR = BASE_DIR / "data" / "renders"
+CEMC_RENDERS_DIR = BASE_DIR / "data" / "cemc_renders"
 
 RENDERS_DIR.mkdir(parents=True, exist_ok=True)
 

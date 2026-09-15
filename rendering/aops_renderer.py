@@ -4,9 +4,6 @@ import os
 import sqlite3
 from playwright.async_api import async_playwright
 from constants import DATABASE, RENDERS_DIR, R2_BUCKET_URL
-from logger_config import get_file_logger
-
-logger = get_file_logger("renderer", "logging/renderer.log")
 
 def create_html_document(body_html: str) -> str:
     return f"""<!DOCTYPE html>
@@ -92,10 +89,10 @@ async def render_problem(semaphore, context, html: str, output_path: str, proble
             await page.set_content(document)
 
             await page.locator("body").screenshot(path=output_path)
-            logger.info(f"Successfully rendered problem id: {problem_id}")
+            print(f"Successfully rendered problem id: {problem_id}")
 
         except Exception as e:
-            logger.error(f"Failed to render problem id {problem_id}: {e}", exc_info=True)
+            print(f"Failed to render problem id {problem_id}: {e}")
         finally:
             await page.close()
 

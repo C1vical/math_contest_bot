@@ -4,6 +4,7 @@ import re
 import asyncio
 from playwright.async_api import async_playwright
 from url import extract_urls
+from constants import CEMC_RENDERS_DIR
 
 def fetch_raw_html(contest: str, year: str) -> str:
     urls = extract_urls()
@@ -407,7 +408,7 @@ async def render(semaphore, context, problem: str, num: int):
 
         await page.set_content(document)
 
-        output_path = f"../PCF_renders/{num}.png"
+        output_path = CEMC_RENDERS_DIR / f"{contest}_{year}_{num}.png"
         await page.locator("body").screenshot(path=output_path)
 
         await page.close()
@@ -430,6 +431,8 @@ async def render_problems(contest: str, year: str):
 
         await browser.close()
         print("Done rendering!")
+
+
 
 if __name__ == "__main__":
     while True:

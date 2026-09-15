@@ -82,7 +82,7 @@ async def help_command(interaction: discord.Interaction, command_name: str = Non
         embed.description = "Displays a list of all competition series currently stored in the database."
     elif cmd == "info":
         embed.title = "Help: `/info`"
-        embed.description = "Displays details about a specific contest. Requires 'contest"
+        embed.description = "Displays details about a specific contest. Requires 'contest'"
     elif cmd == "gimme":
         embed.title = "Help: `/gimme`"
         embed.description = "Fetches a specific problem image. Requires `year`, `contest`, and `question_number`."

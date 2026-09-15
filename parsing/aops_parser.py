@@ -2,10 +2,7 @@ import asyncio
 import re
 from bs4 import BeautifulSoup
 from curl_cffi import requests
-from logger_config import get_file_logger
 import random
-
-logger = get_file_logger("parsing", "logging/parsing.log")
 
 async def fetch_problem_html(page_title: str, max_retries: int = 4) -> str:
     """Fetch raw HTML content from an AoPS wiki page using curl_cffi with exponential jitter backoff."""
