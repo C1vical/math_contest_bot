@@ -1,20 +1,22 @@
 from patchright.async_api import async_playwright
 import asyncio
 import json
+from parsing.contests_json import add_problems_for_contest
 
-base_url = "https://artofproblemsolving.com/community/"
-session_id = "21d6f40cfb511982e4424e0e250a9557" # same ID for not logged in
+base_url = "https://artofproblemsolving.com/community/" # base URL for AoPS community
+session_id = "21d6f40cfb511982e4424e0e250a9557" # default ID for non-logged in users
 
-# contest and its AOPS collection id
+# contest and its AOPS id
 contests = {
     "CMO": "3277",
     "CJMO": "1231801",
     "CMOQR": "3280"
 }
 
-async def fetch_category_data(page, collection_id):
+async def fetch_category_data(page, id):
+    """ Fetches category data from AoPS community for a given category ID """
     return await page.evaluate("""
-        async ([collection_id, session_id]) => {
+        async ([id, session_id]) => {
         const response = await fetch(
                 "https://artofproblemsolving.com/m/community/ajax.php",
                 {
@@ -23,7 +25,7 @@ async def fetch_category_data(page, collection_id):
                         "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
                         "x-requested-with": "XMLHttpRequest"
                     },
-                    body: `category_id=${collection_id}&a=fetch_category_data&aops_logged_in=false&aops_user_id=1&aops_session_id=${session_id}`,
+                    body: `category_id=${id}&a=fetch_category_data&aops_logged_in=false&aops_user_id=1&aops_session_id=${session_id}`,
                     method: "POST",
                     credentials: "include"
                 }
@@ -34,16 +36,17 @@ async def fetch_category_data(page, collection_id):
         }
 
         return await response.json();
-    }""", [collection_id, session_id])
+    }""", [id, session_id])
 
-async def save_item_ids_to_json(page, file_path):
+async def save_contest_ids_to_json(page, file_path):
+    """ Fetches contest IDs from the AoPS community and saves them to a JSON file """
     await page.goto(base_url)
 
     ids = {}
-    for contest, collection_id in contests.items():
+    for contest, id in contests.items():
         print(f"Fetching {contest}...")
 
-        response = await fetch_category_data(page, collection_id)
+        response = await fetch_category_data(page, id)
         items = response.get("response", {}).get("category", {}).get("items", [])
 
         for item in items:
@@ -55,33 +58,38 @@ async def save_item_ids_to_json(page, file_path):
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(ids, f, indent=4)
 
-async def extract_problems(page, file_path):
+async def extract_problems(page):
+    """ Extracts problems from the AoPS community and saves them to contests.json"""
+
     await page.goto(base_url)
+
     with open("ids.json", "r") as f:
         data = json.load(f)
 
-    # print(data)
-    problems = {}
-    for contest, collection_id in data.items():
+    # iterate through contests and extract problems
+    for contest, id in data.items():
         print(f"Extracting problems for {contest}...")
 
-        response = await fetch_category_data(page, collection_id)
+        response = await fetch_category_data(page, id)
         items = response.get("response", {}).get("category", {}).get("items", [])
 
+        # extract problems from items, making sure
+        # to only include items that have a numeric item_text (i.e. problem number)
+        problems = []
         for item in items:
-            if not item.get('item_text', {}).isdigit():
+            if not item.get('item_text', "").isdigit():
                 continue
-            name = f"{contest} Problem {item.get('item_text', {})}"
-            problems[name] = item.get("post_data", {}).get("post_rendered", {})
+            else:
+                problems.append(item.get("post_data", {}).get("post_rendered", {}))
 
-        await asyncio.sleep(0.2) # limit to 5 requests per second, or we get blocked
+        contest_year = contest.split("-")[0]
+        contest_name = contest.split(" ")[1]
+        add_problems_for_contest(contest_year, contest_name, problems)
 
-    print(f"Fetched problems successfully. Now writing to file...")
+        print(f"Added problems from {contest}!")
 
-    # convert to json and write to file
-    with open(file_path, "w", encoding="utf-8") as f:
-        json.dump(problems, f, indent=4)
-
+        # limit to 5 requests per second, or we get blocked
+        await asyncio.sleep(0.2)
 
 async def main():
     async with async_playwright() as p:
@@ -94,8 +102,9 @@ async def main():
 
         # await save_item_ids_to_json(page, "ids.json")
 
-        await extract_problems(page, "problems.json")
+        await extract_problems(page)
 
+        print("Done extracting problems!")
         await browser.close()
 
 if __name__ == "__main__":
