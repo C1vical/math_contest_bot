@@ -1,7 +1,7 @@
 from patchright.async_api import async_playwright
 import asyncio
 import json
-from parsing.contests_json import add_problems_for_contest
+from parsing.contests import add_problems_for_contest
 
 base_url = "https://artofproblemsolving.com/community/" # base URL for AoPS community
 session_id = "21d6f40cfb511982e4424e0e250a9557" # default ID for non-logged in users
