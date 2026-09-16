@@ -1,5 +1,5 @@
 import re
-
+import json
 import requests
 from bs4 import BeautifulSoup
 
@@ -53,9 +53,11 @@ def extract_urls():
                     if year in id:
                         y = year
 
-                urls[(c,y)] = link
+                urls[f"{y}_{c}"] = link
     return urls
+
 if __name__ == "__main__":
     dict = extract_urls()
-    print(len(dict))
-    print(dict)
+    with open("cemc_urls.json", "w") as json_file:
+        json.dump(dict, json_file, indent=4)
+    print("JSON data is saved.")
