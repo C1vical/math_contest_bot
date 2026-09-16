@@ -1,7 +1,7 @@
 import asyncio
-import aiohttp
 import os
 import sqlite3
+import aiohttp
 from playwright.async_api import async_playwright
 from constants import DATABASE, RENDERS_DIR, R2_BUCKET_URL
 
@@ -41,7 +41,6 @@ def create_html_document(body_html: str) -> str:
             padding: 0 0 8px 0;
             font-size: 25px;
             font-weight: bold;
-
             line-height: 1.25;
             border-bottom: 1px solid #cccccc;
         }}
@@ -73,77 +72,54 @@ def create_html_document(body_html: str) -> str:
     </body>
     </html>"""
 
-async def render_problem(semaphore, context, html: str, output_path: str, problem_id: str):
-    """Render a single problem into PNG format if the output file does not exist."""
+async def render_problem(semaphore, context, html: str, problem_id: str):
+    """Render a single problem into PNG format if it doesn't already exist."""
+    output_path = os.path.join(RENDERS_DIR, f"{problem_id}.png")
+
     if os.path.exists(output_path):
         return
 
     async with semaphore:
-        if os.path.exists(output_path):
-            return
-
         page = await context.new_page()
         try:
             document = create_html_document(html)
-
             await page.set_content(document)
-
             await page.locator("body").screenshot(path=output_path)
             print(f"Successfully rendered problem id: {problem_id}")
-
         except Exception as e:
             print(f"Failed to render problem id {problem_id}: {e}")
         finally:
             await page.close()
 
-async def render_all_problems(scraper_finished_event: asyncio.Event = None):
-    """Poll database for records and render missing problem images."""
-    print("Starting image renderer...")
+async def render_all_problems():
+    """Fetch all rows from the database once and render them in batch."""
+    print("Rendering problems...")
     os.makedirs(RENDERS_DIR, exist_ok=True)
-    in_flight = set()
 
+    # 1. Fetch database records once upfront
+    with sqlite3.connect(DATABASE) as conn:
+        rows = conn.execute("SELECT id, question_statement FROM math_problems").fetchall()
+
+    # 2. Render all unrendered problems using asyncio.gather
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(viewport={"width": 900, "height": 800}, device_scale_factor=2)
-        semaphore = asyncio.Semaphore(1)
+        # context = await browser.new_context(viewport={"width": 900, "height": 800}, device_scale_factor=2)
+        context = await browser.new_context(device_scale_factor=2)
+        semaphore = asyncio.Semaphore(8)  # Set concurrency limit
 
-        while True:
-            with sqlite3.connect(DATABASE) as conn:
-                rows = conn.execute("SELECT id, question_statement FROM math_problems").fetchall()
+        tasks = [render_problem(semaphore, context, html, problem_id) for problem_id, html in rows]
 
-            unrendered_rows = []
-
-            for problem_id, html in rows:
-                output_path = os.path.join(RENDERS_DIR, f"{problem_id}.png")
-                if not os.path.exists(output_path) and problem_id not in in_flight:
-                    unrendered_rows.append((html, output_path, problem_id))
-
-            for html, output_path, problem_id in unrendered_rows:
-                in_flight.add(problem_id)
-
-                async def task_wrapper(h=html, op=output_path, pid=problem_id):
-                    try:
-                        await render_problem(semaphore, context, h, op, pid)
-                    finally:
-                        in_flight.remove(pid)
-
-                asyncio.create_task(task_wrapper())
-
-            is_finished = scraper_finished_event.is_set() if scraper_finished_event else True
-
-            if not in_flight and is_finished and not unrendered_rows:
-                break
-
-            await asyncio.sleep(1)
-
+        await asyncio.gather(*tasks)
         await browser.close()
-        print("Done rendering all problems!")
+
+    print("Done rendering all problems!")
 
 async def get_image_data(problem_id: str):
     image_url = f"{R2_BUCKET_URL}/{problem_id}.png"
 
     async with aiohttp.ClientSession() as session:
         async with session.get(image_url) as resp:
-            image_data = await resp.read()
-            return image_data
+            return await resp.read()
 
+if __name__ == "__main__":
+    asyncio.run(render_all_problems())
