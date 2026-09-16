@@ -1,10 +1,10 @@
-import asyncio
 import re
 from bs4 import BeautifulSoup
 from curl_cffi import requests
 import random
+import time
 
-async def fetch_problem_html(page_title: str, max_retries: int = 4) -> str:
+def fetch_problem_html(page_title: str, max_retries: int = 4) -> str:
     """Fetch raw HTML content from an AoPS wiki page using curl_cffi with exponential jitter backoff."""
     url = "https://artofproblemsolving.com/wiki/api.php"
 
@@ -19,8 +19,7 @@ async def fetch_problem_html(page_title: str, max_retries: int = 4) -> str:
 
     for attempt in range(1, max_retries + 1):
         try:
-            async with requests.AsyncSession() as session:
-                response = await session.get(url=url, params=params, impersonate="chrome", timeout=12)
+            response = requests.get(url=url, params=params, impersonate="chrome", timeout=12)
 
             # Handle 429
             if response.status_code == 429:
@@ -32,7 +31,7 @@ async def fetch_problem_html(page_title: str, max_retries: int = 4) -> str:
                     # Exponential backoff + jitter
                     backoff = (2 ** attempt) + random.uniform(0.5, 2.0)
 
-                await asyncio.sleep(backoff)
+                time.sleep(backoff)
                 continue
 
             response.raise_for_status()
@@ -42,14 +41,13 @@ async def fetch_problem_html(page_title: str, max_retries: int = 4) -> str:
 
         except Exception as e:
             backoff = (2 ** attempt) + random.uniform(0.5, 2.0)
-            await asyncio.sleep(backoff)
+            time.sleep(backoff)
 
-    await asyncio.sleep(60)
+    time.sleep(backoff)
 
     # Final attempt
     try:
-        async with requests.AsyncSession() as session:
-            response = await session.get(url=url, params=params, impersonate="chrome", timeout=12)
+        response = requests.get(url=url, params=params, impersonate="chrome", timeout=12)
         response.raise_for_status()
         data = response.json()
         return data.get("parse", {}).get("text", {}).get("*", "")
@@ -101,8 +99,8 @@ def extract_problem_statement(raw_wikitext: str, year: int, contest: str, q_num:
 
     return raw_statement
 
-async def fetch_problem_statement(year: int, wiki_title: str, q_num: int) -> str:
+def fetch_problem_statement(year: int, wiki_title: str, q_num: int) -> str:
     """Fetch problem statement HTML and parse into a string."""
     page_title = f"{year}_{wiki_title}_Problems/Problem_{q_num}"
-    raw_html = await fetch_problem_html(page_title)
+    raw_html = fetch_problem_html(page_title)
     return extract_problem_statement(raw_html, year, wiki_title, q_num)

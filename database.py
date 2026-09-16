@@ -110,6 +110,4 @@ def get_contest_count():
     print(f"Total problems: {num_problems}")
 
 if __name__ == "__main__":
-    # get_contest_count()
-    remove_problem(2015, "USAJMO", 2)
-    remove_problem(2015, "USAJMO", 3)
+    get_contest_count()
