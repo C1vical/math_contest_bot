@@ -2,9 +2,8 @@ from curl_cffi import requests
 from bs4 import BeautifulSoup
 import re
 import json
-from pathlib import Path
 
-JSON_PATH = Path(__file__).parent / "cemc_urls.json"
+JSON_PATH = "cemc_urls.json"
 
 def fetch_raw_html(contest: str, year: str) -> str:
     with open(JSON_PATH, "r") as f:
@@ -19,6 +18,7 @@ def fetch_raw_html(contest: str, year: str) -> str:
     return response.text
 
 def extract_problems(raw_html: str) -> list[str]:
+    """ Extracts problems from the raw HTML of a CEMC contest page."""
     soup = BeautifulSoup(raw_html, "html5lib") # using html5lib will automatically fix broken tags, unlike normal html.parser
     problems = []
 

@@ -47,11 +47,6 @@ def add_problems_for_contest(contest_year: str, contest_name: str, problems: lis
     # ensure contest exists
     data.setdefault(contest_name, {})
 
-    # ensure not overwriting existing year
-    if contest_year in data:
-        print(f"{contest_year} {contest_name} already exists")
-        return
-
     # initialize year dictionary
     data[contest_name][contest_year] = dict()
 
@@ -63,6 +58,6 @@ def add_problems_for_contest(contest_year: str, contest_name: str, problems: lis
         json.dump(data, f, indent=2)
 
 if __name__ == "__main__":
-    # Initialize the contests.json file with the base template if it doesn't exist
+    # Initialize the contests.json file with the base template if it doesn't exist, or overwrite it if it does exist
     with open(FILE_PATH, 'w') as f:
         json.dump(contests, f, indent=2)

@@ -57,8 +57,7 @@ def display_contest_info(contest: str):
 
     return contest_info
 
-def get_contest_info(year: int, contest: str):
-    """Finds the exact registry tuple for a contest and year"""
+def get_contest_info(contest: str):
     for contest_name, info in CONTEST_REGISTRY.items():
         base_name = contest_name.split("_")[0]
         if base_name == contest:
@@ -66,5 +65,5 @@ def get_contest_info(year: int, contest: str):
     return None
 
 def generate_problem_id(year: int, contest: str, q_num: int) -> str:
-    """Generates shortcode primary keys using the CONTEST_REGISTRY prefix."""
+    """Generates a unique problem ID based on year, contest, and question number."""
     return f"{year}_{contest}_{q_num}"

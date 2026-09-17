@@ -1,6 +1,6 @@
 import re
 import json
-import requests
+from curl_cffi import requests
 from bs4 import BeautifulSoup
 
 def extract_urls():
@@ -57,6 +57,7 @@ def extract_urls():
     return urls
 
 if __name__ == "__main__":
+    # Extract URLs and save to JSON file
     dict = extract_urls()
     with open("cemc_urls.json", "w") as json_file:
         json.dump(dict, json_file, indent=4)

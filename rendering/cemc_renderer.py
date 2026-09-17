@@ -359,7 +359,7 @@ def create_html_document(body_html: str) -> str:
     </html>
     """
 
-async def render(semaphore, context, year: int, contest: str, problem: str, num: int):
+async def render(semaphore, context, year: str, contest: str, problem: str, num: int):
     output_path = os.path.join(CEMC_RENDERS_DIR, f"{year}_{contest}_{num}.png")
 
     if os.path.exists(output_path):
