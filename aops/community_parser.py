@@ -1,7 +1,7 @@
 from patchright.async_api import async_playwright
 import asyncio
 import json
-from parsing.contests import add_problems_for_contest
+from cemc.contests import add_problems_for_contest
 
 base_url = "https://artofproblemsolving.com/community/" # base URL for AoPS community
 session_id = "21d6f40cfb511982e4424e0e250a9557" # default ID for non-logged in users
@@ -63,7 +63,7 @@ async def extract_problems(page):
 
     await page.goto(base_url)
 
-    with open("ids.json", "r") as f:
+    with open("../cemc/ids.json", "r") as f:
         data = json.load(f)
 
     # iterate through contests and extract problems

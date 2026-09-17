@@ -2,7 +2,7 @@ import asyncio
 import os
 from playwright.async_api import async_playwright
 from constants import CEMC_RENDERS_DIR
-from parsing.cemc_parser import fetch_raw_html, extract_problems
+from cemc.cemc_parser import fetch_raw_html, extract_problems
 
 def create_html_document(body_html: str) -> str:
     return f"""<!DOCTYPE html>

@@ -1,6 +1,6 @@
 import time
 import random
-from parsing.aops_parser import fetch_problem_statement
+from aops.aops_parser import fetch_problem_statement
 from database import create_database, add_problem, get_loaded_problems
 from constants import CONTEST_REGISTRY, get_contest_info
 
