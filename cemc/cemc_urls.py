@@ -2,31 +2,31 @@ import json
 from curl_cffi import requests
 from bs4 import BeautifulSoup
 
+base_url = "https://cemc.uwaterloo.ca/resources/past-contests"
+view_query = "block_config_key%3Dpast_contest%3A1srMgUG8ZWnN5_Mx6CmP5HeP-aleHwL0jgxyVUuVYE4"
+contests = ["Pascal", "Cayley", "Fermat", "Euclid", "Hypatia", "Galois", "Fryer", "Gauss7", "Gauss8"]
+academic_years = {
+    "2026": "86",
+    "2025": "83",
+    "2024": "57",
+    "2023": "31",
+    "2022": "32",
+    "2021": "33",
+    "2020": "34",
+    "2019": "35",
+    "2018": "36",
+    "2017": "37",
+    "2016": "38",
+}
+
+contest_categories = {
+    "PCF": "14",
+    "Euclid": "24",
+    "FGH": "25",
+    "Gauss": "13"
+}
+
 def extract_urls():
-    base_url = "https://cemc.uwaterloo.ca/resources/past-contests"
-    view_query = "block_config_key%3Dpast_contest%3A1srMgUG8ZWnN5_Mx6CmP5HeP-aleHwL0jgxyVUuVYE4"
-    contests = ["Pascal", "Cayley", "Fermat", "Euclid", "Hypatia", "Galois", "Fryer", "Gauss7", "Gauss8"]
-    academic_years = {
-        "2026": "86",
-        "2025": "83",
-        "2024": "57",
-        "2023": "31",
-        "2022": "32",
-        "2021": "33",
-        "2020": "34",
-        "2019": "35",
-        "2018": "36",
-        "2017": "37",
-        "2016": "38",
-    }
-
-    contest_categories = {
-        "PCF": "14",
-        "Euclid": "24",
-        "FGH": "25",
-        "Gauss": "13"
-    }
-
     urls = {}
 
     for academic_year in academic_years.values():
