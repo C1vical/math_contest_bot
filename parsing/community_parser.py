@@ -76,14 +76,17 @@ async def extract_problems(page):
         # extract problems from items, making sure
         # to only include items that have a numeric item_text (i.e. problem number)
         problems = []
+        contest_year = contest.split(" ")[0]
+        contest_name = contest.split(" ")[1]
         for item in items:
             if not item.get('item_text', "").isdigit():
                 continue
             else:
-                problems.append(item.get("post_data", {}).get("post_rendered", {}))
+                problem_number = item.get('item_text')
+                title_header = f"<h2>{contest_year} {contest_name} Problem {problem_number}</h2>"
+                problems.append(title_header + item.get("post_data", {}).get("post_rendered", {}))
 
-        contest_year = contest.split(" ")[0]
-        contest_name = contest.split(" ")[1]
+
         add_problems_for_contest(contest_year, contest_name, problems)
 
         print(f"Added problems from {contest}!")
