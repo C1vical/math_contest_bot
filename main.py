@@ -148,6 +148,22 @@ async def random_cmd(interaction: discord.Interaction, year: int = None, contest
     random_problem = await get_random_problem(year, contest, question_number)
     await send_problem_image(interaction, random_problem)
 
+    # Testing embed
+    # random_problem = await get_random_problem(year, contest, question_number)
+    #
+    # problem_id, year, contest, question_number, _, _ = random_problem
+    #
+    # contest_full_name = f"{year} {contest} Problem {question_number}"
+    # embed = discord.Embed(
+    #     title=contest_full_name,
+    #     color=discord.Color.blue()
+    # )
+    #
+    # image_url = f"https://pub-c5ba57c8ddcb4baf8d2fc7de913627cf.r2.dev/{problem_id}.png"
+    # embed.set_image(url=image_url)
+    #
+    # await interaction.response.send_message(embed=embed)
+
 # GLOBAL SLASH COMMAND ERROR HANDLER
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
