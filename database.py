@@ -61,7 +61,7 @@ def add_problem(year: int, contest: str, q_num: int, statement: str, answer: str
         )
 
 def remove_problem(year: int, contest: str, q_num: int):
-    """Remove a math problem from the SQLite database."""
+    """Remove a problem from the SQLite database."""
     problem_id = generate_problem_id(year, contest, q_num)
 
     with sqlite3.connect(DATABASE) as conn:
@@ -74,10 +74,6 @@ def remove_problem(year: int, contest: str, q_num: int):
 
     print(f"Removed problem {problem_id} from database.")
 
-def is_edge_case_skipped(year: int, contest: str) -> bool:
-    """Check if a given contest year is a known historical skip/gap year."""
-    return (year == 2021 and contest == "AMC8") or (year == 1980 and contest == "IMO")
-
 def get_loaded_problems() -> set:
     """Return a set of (year, contest, question_number) tuples stored in SQLite or skipped."""
     loaded_problems = set()
@@ -86,15 +82,11 @@ def get_loaded_problems() -> set:
         cursor = conn.execute("SELECT year, contest, question_number FROM math_problems")
         loaded_problems.update(cursor.fetchall())
 
-    # Include edge case skip years so all of their problem numbers are skipped
-    for key, info in CONTEST_REGISTRY.items():
-        _, min_year, max_year, max_probs = info
-        contest = key.split("_")[0]
-
-        for year in range(min_year, max_year + 1):
-            if is_edge_case_skipped(year, contest):
-                for q_num in range(1, max_probs + 1):
-                    loaded_problems.add((year, contest, q_num))
+    # Manually add skipped years (1980 IMO and 2021 AMC8) to the loaded problems set
+    for q_num in range(1, 26):
+        loaded_problems.add((2021, "AMC8", q_num))  # 2021 AMC8
+    for q_num in range(1,6):
+        loaded_problems.add((1980, "IMO", q_num))  # 1980 IMO
 
     return loaded_problems
 
@@ -110,4 +102,6 @@ def get_contest_count():
     print(f"Total problems: {num_problems}")
 
 if __name__ == "__main__":
-    get_contest_count()
+    # get_contest_count()
+    with sqlite3.connect(DATABASE) as conn:
+        cursor = conn.execute

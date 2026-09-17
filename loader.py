@@ -20,7 +20,7 @@ def load_contest(year: int, contest: str, loaded_problems: set):
     info = get_contest_info(contest)
     wiki_title, _, _, max_probs = info
 
-    missing_problems = [ p for p in range(1, max_probs + 1) if (year, contest, p) not in loaded_problems]
+    missing_problems = [p for p in range(1, max_probs + 1) if (year, contest, p) not in loaded_problems]
 
     if not missing_problems:
         print(f"Already loaded {year} {contest}")
