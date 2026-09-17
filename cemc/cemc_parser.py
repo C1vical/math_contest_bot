@@ -1,9 +1,12 @@
 from curl_cffi import requests
+from curl_cffi.requests.exceptions import RequestException
 from bs4 import BeautifulSoup
 import re
 import json
+from pathlib import Path
 
-JSON_PATH = "C:/Users/joshu/PycharmProjects/math_contest_bot/parsing/cemc_urls.json"
+BASE_DIR = Path(__file__).resolve().parent
+JSON_PATH = BASE_DIR / "cemc_urls.json"
 
 def fetch_raw_html(year: str, contest: str) -> str:
     with open(JSON_PATH, "r") as f:
@@ -12,9 +15,12 @@ def fetch_raw_html(year: str, contest: str) -> str:
     key = f"{year}_{contest}"
     url = urls[key]
 
-    response = requests.get(url, impersonate="chrome")
-    response.raise_for_status()
-    # print(response.status_code)
+    try:
+        response = requests.get(url, impersonate="chrome")
+        response.raise_for_status()
+    except RequestException as e:
+        print(f"Error fetching {url}: {e}")
+        return ""
     return response.text
 
 def extract_problems(raw_html: str) -> list[str]:
