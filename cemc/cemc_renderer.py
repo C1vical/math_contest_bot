@@ -381,7 +381,7 @@ async def render_all_problems(contest: str, year: str):
     print("Rendering problems...")
     os.makedirs(CEMC_RENDERS_DIR, exist_ok=True)
 
-    raw = fetch_raw_html(contest, year)
+    raw = fetch_raw_html(year, contest)
     problems = extract_problems(raw)
 
     async with async_playwright() as p:

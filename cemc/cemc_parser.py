@@ -3,9 +3,9 @@ from bs4 import BeautifulSoup
 import re
 import json
 
-JSON_PATH = "cemc_urls.json"
+JSON_PATH = "C:/Users/joshu/PycharmProjects/math_contest_bot/parsing/cemc_urls.json"
 
-def fetch_raw_html(contest: str, year: str) -> str:
+def fetch_raw_html(year: str, contest: str) -> str:
     with open(JSON_PATH, "r") as f:
         urls = json.load(f)
 
@@ -14,7 +14,7 @@ def fetch_raw_html(contest: str, year: str) -> str:
 
     response = requests.get(url, impersonate="chrome")
     response.raise_for_status()
-    print(response.status_code)
+    # print(response.status_code)
     return response.text
 
 def extract_problems(raw_html: str) -> list[str]:
