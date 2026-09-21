@@ -38,9 +38,15 @@ def load_contest(year: int, contest: str):
         question_statement = fetch_problem_statement(year, wiki_title, problem_num)
         add_problem(year, contest, problem_num, question_statement)
 
+def load_aops_community():
+    from aops.community_parser import run_session, extract_problems
+    run_session(extract_problems)
+    print("Done loading problems from AoPS community!")
+
 def load_all_contests():
-    load_cemc()
+    # load_cemc()
     # load_aops()
+    load_aops_community()
 
 if __name__ == "__main__":
     create_database()
