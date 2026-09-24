@@ -1,5 +1,6 @@
 from patchright.sync_api import sync_playwright
 import json
+import re
 from pathlib import Path
 
 base_url = "https://artofproblemsolving.com/community/" # base URL for AoPS community
@@ -98,10 +99,13 @@ def extract_problems(page):
             else:
                 problem_number = item.get('item_text')
                 title_header = f"<h2>{contest_year} {contest_name} Problem {problem_number}</h2>"
+                final_statement = title_header + item.get("post_data", {}).get("post_rendered", {})
+                final_statement = re.sub(r'src=(["\'])//', r'src=\1https://', final_statement)
+
                 add_problem(contest_year,
                             contest_name,
                             problem_number,
-                            title_header + item.get("post_data", {}).get("post_rendered", {}))
+                            final_statement,)
 
         print(f"Loaded problems for {contest}!")
 
