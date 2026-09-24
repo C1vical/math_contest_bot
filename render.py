@@ -178,6 +178,9 @@ async def render_all_problems():
     """Fetch all rows from the database once and render them in batch."""
     print("Rendering problems...")
 
+    # Create directory if it doesn't exist
+    RENDERS_DIR.mkdir(parents=True, exist_ok=True)
+
     # 1. Fetch database records once upfront
     with sqlite3.connect(DATABASE) as conn:
         rows = conn.execute("SELECT id, question_statement FROM math_problems").fetchall()

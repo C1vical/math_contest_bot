@@ -44,7 +44,7 @@ def load_aops_community():
     print("Done loading problems from AoPS community!")
 
 def load_all_contests():
-    # load_cemc()
+    load_cemc()
     # load_aops()
     load_aops_community()
 
