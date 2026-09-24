@@ -1,6 +1,12 @@
 import os
 import sqlite3
-from constants import DATABASE, RENDERS_DIR, CONTEST_REGISTRY, generate_problem_id
+from pathlib import Path
+
+from constants import generate_problem_id
+from render import RENDERS_DIR
+
+BASE_DIR = Path(__file__).resolve().parent
+DATABASE = BASE_DIR / "data" / "problems.db"
 
 def create_database():
     """Create the SQLite database and table schema if it does not already exist."""

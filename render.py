@@ -1,8 +1,16 @@
 import asyncio
 import sqlite3
+from pathlib import Path
+
 import aiohttp
 from playwright.async_api import async_playwright
-from constants import DATABASE, RENDERS_DIR, R2_BUCKET_URL
+
+from database import DATABASE
+
+R2_BUCKET_URL = "https://pub-c5ba57c8ddcb4baf8d2fc7de913627cf.r2.dev"
+
+BASE_DIR = Path(__file__).resolve().parent
+RENDERS_DIR = BASE_DIR / "data" / "renders"
 
 def create_html_document(body_html: str) -> str:
     return f"""<!DOCTYPE html>
