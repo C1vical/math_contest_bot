@@ -1,9 +1,7 @@
-import os
 import sqlite3
 from pathlib import Path
 
 from constants import generate_problem_id
-from render import RENDERS_DIR
 
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE = BASE_DIR / "data" / "problems.db"
@@ -66,36 +64,6 @@ def add_problem(year: int, contest: str, q_num: int, statement: str, answer: str
             (problem_id, year, contest, q_num, statement, str(answer)),
         )
 
-def remove_problem(year: int, contest: str, q_num: int):
-    """Remove a problem from the SQLite database."""
-    problem_id = generate_problem_id(year, contest, q_num)
-
-    with sqlite3.connect(DATABASE) as conn:
-        cursor = conn.execute(
-            "DELETE FROM math_problems WHERE id = ?", (problem_id,)
-        )
-
-    render_path = os.path.join(RENDERS_DIR, f"{problem_id}.png")
-    os.remove(render_path)
-
-    print(f"Removed problem {problem_id} from database.")
-
-def get_loaded_problems() -> set:
-    """Return a set of (year, contest, question_number) tuples stored in SQLite or skipped."""
-    loaded_problems = set()
-
-    with sqlite3.connect(DATABASE) as conn:
-        cursor = conn.execute("SELECT year, contest, question_number FROM math_problems")
-        loaded_problems.update(cursor.fetchall())
-
-    # Manually add skipped years (1980 IMO and 2021 AMC8) to the loaded problems set
-    for q_num in range(1, 26):
-        loaded_problems.add((2021, "AMC8", q_num))  # 2021 AMC8
-    for q_num in range(1,6):
-        loaded_problems.add((1980, "IMO", q_num))  # 1980 IMO
-
-    return loaded_problems
-
 def get_contest_count():
     num_problems = 0
     with sqlite3.connect(DATABASE) as conn:
@@ -108,6 +76,4 @@ def get_contest_count():
     print(f"Total problems: {num_problems}")
 
 if __name__ == "__main__":
-    # get_contest_count()
-    with sqlite3.connect(DATABASE) as conn:
-        cursor = conn.execute
+    get_contest_count()
