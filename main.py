@@ -11,7 +11,7 @@ from flask import Flask
 
 from constants import get_contests, display_contest_info
 from database import get_problem, get_random_problem
-from aops.aops_renderer import get_image_data
+from render import get_image_data
 
 # FLASK HEALTH-CHECK SERVER (Render Keep-Alive)
 app = Flask(__name__)
