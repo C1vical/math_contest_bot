@@ -13,6 +13,18 @@ contests = {
     "CMOQR": "3280"
 }
 
+# contest and its AOPS id for contests before 1977
+contest_ids = {
+    "1976 CMO": "5021",
+    "1975 CMO": "5020",
+    "1974 CMO": "5019",
+    "1973 CMO": "5018",
+    "1972 CMO": "5017",
+    "1971 CMO": "5016",
+    "1970 CMO": "5015",
+    "1969 CMO": "5014",
+}
+
 BASE_DIR = Path(__file__).resolve().parent
 ID_PATH = BASE_DIR / "ids.json" # path to save contest ids
 
@@ -68,6 +80,7 @@ def save_contest_ids_to_json(page):
         for item in items:
             ids[f"{item['item_score']} {contest}"] = item["item_id"]
 
+    ids.update(contest_ids)
     print(f"Fetched item ids successfully. Now writing to file...")
 
     # convert to json and write to file
