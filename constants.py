@@ -5,8 +5,7 @@ R2_BUCKET_URL = "https://pub-c5ba57c8ddcb4baf8d2fc7de913627cf.r2.dev"
 BASE_DIR = Path(__file__).resolve().parent
 
 DATABASE = BASE_DIR / "data" / "problems.db"
-RENDERS_DIR = BASE_DIR / "data" / "aops_renders"
-CEMC_RENDERS_DIR = BASE_DIR / "data" / "cemc_renders"
+RENDERS_DIR = BASE_DIR / "data" / "renders"
 
 RENDERS_DIR.mkdir(parents=True, exist_ok=True)
 
