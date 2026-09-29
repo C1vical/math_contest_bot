@@ -1,4 +1,5 @@
-from database import create_database, add_problem
+from database import create_database, add_problem, get_contest_info
+
 
 def load_cemc():
     from cemc.cemc_urls import contests, academic_years
@@ -28,15 +29,15 @@ def load_aops():
             load_contest(year, contest)
 
 def load_contest(year: int, contest: str):
-    from constants import get_contest_info
     from aops.aops_parser import fetch_problem_statement
 
     info = get_contest_info(contest)
-    wiki_title, _, _, max_probs = info
+    wiki_title, _, _, num_probs = info
 
-    for problem_num in range(1, max_probs + 1):
+    for problem_num in range(1, num_probs + 1):
         question_statement = fetch_problem_statement(year, wiki_title, problem_num)
         add_problem(year, contest, problem_num, question_statement)
+    print(f"Loaded {num_probs} problems for {year} {contest}")
 
 def load_aops_community():
     from aops.community_parser import run_session, extract_problems
@@ -44,9 +45,9 @@ def load_aops_community():
     print("Done loading problems from AoPS community!")
 
 def load_all_contests():
-    load_cemc()
-    # load_aops()
-    load_aops_community()
+    # load_cemc()
+    load_aops()
+    # load_aops_community()
 
 if __name__ == "__main__":
     create_database()
