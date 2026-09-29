@@ -1,6 +1,8 @@
 import json
-from curl_cffi import requests
+import re
+
 from bs4 import BeautifulSoup
+from curl_cffi import requests
 
 base_url = "https://cemc.uwaterloo.ca/resources/past-contests"
 view_query = "block_config_key%3Dpast_contest%3A1srMgUG8ZWnN5_Mx6CmP5HeP-aleHwL0jgxyVUuVYE4"
