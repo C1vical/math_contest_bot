@@ -9,8 +9,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 from flask import Flask
 
-from constants import get_contests, display_contest_info
-from database import get_problem, get_random_problem
+from database import get_problem, get_random_problem, get_contests, display_contest_info
 from render import get_image_data
 
 # FLASK HEALTH-CHECK SERVER (Render Keep-Alive)

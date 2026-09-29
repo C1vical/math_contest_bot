@@ -26,32 +26,3 @@ CONTEST_REGISTRY = {
     "USAMO_1996": ("USAMO", 1996, 2026, 6), # 6 problems 1996-present
     "IMO": ("IMO", 1959, 2026, 6),
 }
-
-def get_contests() -> str:
-    contests = []
-    for contest in CONTEST_REGISTRY:
-        if contest.split("_")[0] in contests:
-            continue
-        contests.append(contest.split("_")[0])
-
-    return "\n".join([f"• `{c}`" for c in contests])
-
-def display_contest_info(contest: str):
-    contest_info = ""
-    for contest_name, info in CONTEST_REGISTRY.items():
-        if contest_name.split("_")[0] == contest:
-            contest_info += f"Years {info[1]} - {info[2]}:\n"
-            contest_info += f"  • Problems: {info[3]}\n\n"
-
-    return contest_info
-
-def get_contest_info(contest: str):
-    for contest_name, info in CONTEST_REGISTRY.items():
-        base_name = contest_name.split("_")[0]
-        if base_name == contest:
-            return info
-    return None
-
-def generate_problem_id(year: int, contest: str, q_num: int) -> str:
-    """Generates a unique problem ID based on year, contest, and question number."""
-    return f"{year}_{contest}_{q_num}"
