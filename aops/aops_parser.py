@@ -80,22 +80,8 @@ def extract_problem_statement(raw_wikitext: str, year: int, contest: str, q_num:
 
     raw_statement = "".join(problem_statement)
 
-    # 1. Convert protocol-relative URLs (src="//...) to https://
+    # Append https to any src attributes that start with //
     raw_statement = re.sub(r'src=(["\'])//', r'src=\1https://', raw_statement)
-
-    # 2. Convert single-slash domain-relative URLs (src="/...) to absolute
-    raw_statement = re.sub(
-        r'src=(["\'])/(?=[^/])',
-        r'src=\1https://artofproblemsolving.com/',
-        raw_statement
-    )
-
-    # 3. Convert single-slash href links (href="/...) to absolute
-    raw_statement = re.sub(
-        r'href=(["\'])/(?=[^/])',
-        r'href=\1https://artofproblemsolving.com/',
-        raw_statement
-    )
 
     return raw_statement
 
