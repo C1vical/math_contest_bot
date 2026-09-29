@@ -33,7 +33,7 @@ channel_id = int(os.getenv("CHANNEL_ID"))
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
 intents = discord.Intents.default()
-bot = commands.Bot(command_prefix="!", intents=intents)  # 'command_prefix' retained for Bot instance initialization
+bot = commands.Bot(command_prefix="!", intents=intents)  # Command prefix
 
 def is_allowed_channel(interaction: discord.Interaction) -> bool:
     """Enforces that slash commands are only run in the designated channel."""
@@ -140,28 +140,13 @@ async def gimme(interaction: discord.Interaction, year: int, contest: str, quest
     contest="Filter by contest name (optional)",
     question_number="Filter by problem number (optional)"
 )
+
 @app_commands.check(is_allowed_channel)
 async def random_cmd(interaction: discord.Interaction, year: int = None, contest: str = None, question_number: int = None):
     # Defer response to handle database and R2 fetch overhead
     await interaction.response.defer()
     random_problem = await get_random_problem(year, contest, question_number)
     await send_problem_image(interaction, random_problem)
-
-    # Testing embed
-    # random_problem = await get_random_problem(year, contest, question_number)
-    #
-    # problem_id, year, contest, question_number, _, _ = random_problem
-    #
-    # contest_full_name = f"{year} {contest} Problem {question_number}"
-    # embed = discord.Embed(
-    #     title=contest_full_name,
-    #     color=discord.Color.blue()
-    # )
-    #
-    # image_url = f"https://pub-c5ba57c8ddcb4baf8d2fc7de913627cf.r2.dev/{problem_id}.png"
-    # embed.set_image(url=image_url)
-    #
-    # await interaction.response.send_message(embed=embed)
 
 # GLOBAL SLASH COMMAND ERROR HANDLER
 @bot.tree.error
@@ -188,4 +173,4 @@ async def send_problem_image(interaction: discord.Interaction, problem: tuple):
     await interaction.followup.send(file=problem_render)
 
 if __name__ == "__main__":
-    bot.run(token)
+    bot.run(token, log_handler=None)
