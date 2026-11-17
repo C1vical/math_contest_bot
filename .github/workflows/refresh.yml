@@ -1,0 +1,66 @@
+name: Refresh problems
+
+# Weekly: pull the last published database, ingest new / corrected problems,
+# render what changed, upload images, validate, and publish the new database.
+#
+# Off until you opt in: set the repository variable MATHBOT_REFRESH_ENABLED=true
+# and these secrets (Settings -> Secrets and variables -> Actions):
+#   S3_BUCKET, S3_ENDPOINT_URL, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY,
+#   IMAGE_BASE_URL, DATABASE_SNAPSHOT_URL (= IMAGE_BASE_URL + /db/latest.json),
+#   HTTP_USER_AGENT (with your contact details).
+# Any failing step fails the run, so GitHub e-mails you.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: refresh # never two ingests against the same database
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    if: vars.MATHBOT_REFRESH_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      STORAGE_BACKEND: s3
+      S3_BUCKET: ${{ secrets.S3_BUCKET }}
+      S3_ENDPOINT_URL: ${{ secrets.S3_ENDPOINT_URL }}
+      S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+      S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+      IMAGE_BASE_URL: ${{ secrets.IMAGE_BASE_URL }}
+      DATABASE_SNAPSHOT_URL: ${{ secrets.DATABASE_SNAPSHOT_URL }}
+      HTTP_USER_AGENT: ${{ secrets.HTTP_USER_AGENT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements.lock
+      - run: python -m playwright install --with-deps chromium
+      - run: python -m mathbot install-render-assets
+      - name: Pull the published database
+        run: python -m mathbot pull-db
+      - name: Ingest (CEMC is live; AoPS is reported as blocked, which is expected)
+        # Exit code 1 means some contests failed; the report says which. Keep going so
+        # whatever did succeed is still rendered and published, and fail at the end.
+        run: python -m mathbot refresh --report ingest-report.json || echo "INGEST_FAILED=1" >> "$GITHUB_ENV"
+      - run: python -m mathbot render
+      - run: python -m mathbot upload
+      - run: python -m mathbot validate
+      - run: python -m mathbot publish-db
+      - run: python -m mathbot cleanup --remote
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ingest-report
+          path: ingest-report.json
+          if-no-files-found: ignore
+      - name: Fail if ingestion reported errors
+        if: env.INGEST_FAILED == '1'
+        run: |
+          echo "Ingestion reported failures; see the ingest-report artifact." >&2
+          exit 1
