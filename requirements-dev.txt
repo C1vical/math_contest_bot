@@ -1,0 +1,5 @@
+-r requirements.txt
+pytest>=8,<10
+ruff>=0.6,<1
+uv>=0.5,<1                # regenerates the lockfiles
+vulture>=2.11,<3          # dead-code check: vulture mathbot tests --min-confidence 80

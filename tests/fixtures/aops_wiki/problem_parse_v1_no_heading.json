@@ -1,0 +1,9 @@
+{
+  "parse": {
+    "title": "2099 IMO Problems/Problem 1",
+    "revid": 777,
+    "text": {
+      "*": "<div class=\"mw-parser-output\"><p>Prove that for every positive integer <img src=\"//latex.artofproblemsolving.com/a/b/c/n.png\" class=\"latex\" alt=\"$n$\" width=\"60\" height=\"16\" /> the number <img src=\"//latex.artofproblemsolving.com/a/b/c/n2n.png\" class=\"latex\" alt=\"$n^2+n$\" width=\"60\" height=\"16\" /> is even.</p>\n<h2><span class=\"mw-headline\" id=\"Solution\">Solution</span></h2><p>It is a product of consecutive integers.</p></div>"
+    }
+  }
+}

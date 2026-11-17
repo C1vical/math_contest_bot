@@ -1,0 +1,8 @@
+{
+  "parse": {
+    "title": "2099 AIME I Problems/Problem 2",
+    "pageid": 900102,
+    "revid": 222333,
+    "text": "<div class=\"mw-content-ltr mw-parser-output\" lang=\"en\" dir=\"ltr\"><div class=\"mw-heading mw-heading2\"><h2 id=\"Problem_2\">Problem 2</h2><span class=\"mw-editsection\"><span class=\"mw-editsection-bracket\">[</span><a href=\"/wiki/index.php?title=X&amp;action=edit&amp;section=1\">edit</a><span class=\"mw-editsection-bracket\">]</span></span></div>\n<p>Find the remainder when <img src=\"//latex.artofproblemsolving.com/a/b/c/pow.png\" class=\"latex\" alt=\"$3^{10}$\" width=\"60\" height=\"16\" /> is divided by <img src=\"//latex.artofproblemsolving.com/a/b/c/thousand.png\" class=\"latex\" alt=\"$1000$\" width=\"60\" height=\"16\" />.\n</p>\n<div class=\"mw-heading mw-heading2\"><h2 id=\"Solution\">Solution</h2></div>\n<p>Compute directly: 59049, so the remainder is 049.</p></div>"
+  }
+}

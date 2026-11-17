@@ -1,0 +1,125 @@
+"""Turn raw source fragments into safe, deterministic, renderable HTML.
+
+Raw source content is stored untouched elsewhere; this module produces the
+*normalized* form that is hashed, versioned and rendered:
+
+* scripts, styles, forms, buttons, comments and edit links are removed;
+* event-handler attributes and ``javascript:`` URLs are stripped;
+* protocol-relative and relative URLs are made absolute;
+* links are unwrapped (a PNG cannot be clicked);
+* LaTeX survives: MathJax ``\\(...\\)`` text is left alone and AoPS LaTeX
+  images keep their ``alt`` attribute, which holds the TeX source.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import re
+from dataclasses import dataclass
+from urllib.parse import urljoin
+
+from bs4 import BeautifulSoup, Comment, Tag
+
+_DROP_TAGS = ("script", "style", "noscript", "iframe", "object", "embed", "form", "input", "button", "link", "meta")
+_DROP_SELECTORS = (".mw-editsection", "#toc", ".toc", ".printfooter", ".catlinks")
+_URL_ATTRS = ("src", "href")
+# AoPS renders TeX to images; the alt text is the TeX source.
+_LATEX_IMG_CLASSES = {"latex", "latexcenter", "asy-image"}
+MIN_TEXT_CHARS = 5
+
+
+@dataclass(frozen=True)
+class NormalizedContent:
+    html: str
+    text: str
+    content_hash: str
+    image_urls: tuple[str, ...]  # remote (http/https) images, in document order
+
+
+class InvalidContentError(ValueError):
+    """The fragment has no usable statement (empty, or only markup)."""
+
+
+def sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _soup(fragment: str) -> BeautifulSoup:
+    return BeautifulSoup(fragment, "html.parser")
+
+
+def normalize_fragment(fragment: str, base_url: str) -> NormalizedContent:
+    """Sanitize ``fragment`` and return its normalized HTML, text and hash.
+
+    Raises :class:`InvalidContentError` when nothing meaningful is left, so an
+    empty parser result can never be stored as a problem.
+    """
+    soup = _soup(fragment)
+
+    for comment in soup.find_all(string=lambda s: isinstance(s, Comment)):
+        comment.extract()
+    for tag in soup.find_all(_DROP_TAGS):
+        tag.decompose()
+    for selector in _DROP_SELECTORS:
+        for tag in soup.select(selector):
+            tag.decompose()
+
+    for tag in soup.find_all(True):
+        for attr in list(tag.attrs):
+            if attr.lower().startswith("on"):
+                del tag.attrs[attr]
+        for attr in _URL_ATTRS:
+            value = tag.attrs.get(attr)
+            if not isinstance(value, str):
+                continue
+            value = value.strip()
+            if value.lower().startswith(("javascript:", "vbscript:")):
+                del tag.attrs[attr]
+            elif value.startswith(("data:", "#")):
+                tag.attrs[attr] = value
+            else:
+                tag.attrs[attr] = urljoin(base_url, value)
+        tag.attrs.pop("srcset", None)
+        tag.attrs.pop("loading", None)
+
+    for anchor in soup.find_all("a"):
+        anchor.unwrap()
+
+    html = str(soup).strip()
+    text = extract_text(soup)
+    image_urls = tuple(
+        dict.fromkeys(
+            img["src"]
+            for img in soup.find_all("img")
+            if isinstance(img.get("src"), str) and img["src"].startswith(("http://", "https://"))
+        )
+    )
+
+    has_image = soup.find("img") is not None
+    if len(re.sub(r"\s", "", text)) < MIN_TEXT_CHARS and not has_image:
+        raise InvalidContentError("statement is empty after normalization")
+
+    return NormalizedContent(html=html, text=text, content_hash=sha256_text(html), image_urls=image_urls)
+
+
+def extract_text(node: BeautifulSoup | Tag | str) -> str:
+    """Plain text with TeX source inline (``$...$`` from AoPS alts, ``\\(...\\)`` from CEMC)."""
+    soup = _soup(str(node))
+    for img in soup.find_all("img"):
+        alt = (img.get("alt") or "").strip()
+        classes = set(img.get("class") or [])
+        if alt and (classes & _LATEX_IMG_CLASSES or alt.startswith(("$", "\\[", "[asy]"))):
+            if alt.startswith("[asy]"):
+                img.replace_with(" [diagram] ")
+            else:
+                img.replace_with(f" {alt} ")
+        elif alt:
+            img.replace_with(f" [image: {alt}] ")
+        else:
+            img.replace_with(" [image] ")
+    for br in soup.find_all("br"):
+        br.replace_with("\n")
+    text = soup.get_text(" ")
+    text = re.sub(r"[ \t\r\f\v]+", " ", text)
+    text = re.sub(r" ?\n ?", "\n", text)
+    return re.sub(r"\n{2,}", "\n", text).strip()
