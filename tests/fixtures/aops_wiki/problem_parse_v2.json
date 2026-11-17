@@ -1,0 +1,9 @@
+{
+  "parse": {
+    "title": "2099 AMC 10A Problems/Problem 5",
+    "pageid": 900005,
+    "revid": 123456,
+    "redirects": [],
+    "text": "<div class=\"mw-parser-output\"><dl><dd><i>The following problem is from both the 2099 AMC 10A #5 and 2099 AMC 12A #3, so both problems redirect to this page.</i></dd></dl>\n<div id=\"toc\" class=\"toc\"><div class=\"toctitle\"><h2>Contents</h2></div><ul><li><a href=\"#Problem\">1 Problem</a></li><li><a href=\"#Solution_1\">2 Solution 1</a></li></ul></div>\n<h2><span class=\"mw-headline\" id=\"Problem\">Problem</span><span class=\"mw-editsection\">[<a href=\"/wiki/index.php?title=X&amp;action=edit\">edit</a>]</span></h2>\n<p>How many integer solutions does the equation <img src=\"//latex.artofproblemsolving.com/a/b/c/eq.png\" class=\"latex\" alt=\"$x^2 = 49$\" width=\"60\" height=\"16\" /> have? (This sentence mentions a solution on purpose.)\n</p><p><img src=\"//latex.artofproblemsolving.com/a/b/c/asy.png\" class=\"latexcenter\" alt=\"[asy] draw((0,0)--(1,1)); [/asy]\" width=\"60\" height=\"16\" />\n</p><p><img src=\"//latex.artofproblemsolving.com/a/b/c/choices.png\" class=\"latex\" alt=\"$\\textbf{(A) }0\\qquad\\textbf{(B) }1\\qquad\\textbf{(C) }2\\qquad\\textbf{(D) }7\\qquad\\textbf{(E) }49$\" width=\"60\" height=\"16\" />\n</p>\n<h2><span class=\"mw-headline\" id=\"Solution_1\">Solution 1</span></h2>\n<p>Both <img src=\"//latex.artofproblemsolving.com/a/b/c/seven.png\" class=\"latex\" alt=\"$7$\" width=\"60\" height=\"16\" /> and its negative work, so the answer is (C).\n</p>\n<h2><span class=\"mw-headline\" id=\"See_Also\">See Also</span></h2>\n<p><a href=\"/wiki/index.php/2099_AMC_10A_Problems\">2099 AMC 10A Problems</a></p></div>"
+  }
+}

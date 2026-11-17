@@ -1,0 +1,38 @@
+{
+  "parse": {
+    "title": "2099 AMC 10A Problems",
+    "pageid": 5678,
+    "links": [
+      {
+        "ns": 0,
+        "title": "2099 AMC 10A Problems/Problem 1",
+        "exists": true
+      },
+      {
+        "ns": 0,
+        "title": "2099 AMC 10A Problems/Problem 2",
+        "exists": true
+      },
+      {
+        "ns": 0,
+        "title": "2099 AMC 10A Problems/Problem 3",
+        "exists": true
+      },
+      {
+        "ns": 0,
+        "title": "2099 AMC 10A Problems/Problem 4",
+        "exists": false
+      },
+      {
+        "ns": 0,
+        "title": "2099 AMC 10A Answer Key",
+        "exists": true
+      },
+      {
+        "ns": 0,
+        "title": "2098 AMC 10A Problems/Problem 1",
+        "exists": true
+      }
+    ]
+  }
+}

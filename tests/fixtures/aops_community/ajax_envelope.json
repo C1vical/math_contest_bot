@@ -1,0 +1,19 @@
+{
+  "response": {
+    "category": {
+      "category_id": 9000002,
+      "num_items": 12,
+      "items": [
+        {
+          "item_id": 2,
+          "item_text": "1",
+          "post_data": {
+            "post_id": 501,
+            "topic_id": 401,
+            "post_rendered": "Only the first batch of a longer category was delivered (fixture)."
+          }
+        }
+      ]
+    }
+  }
+}

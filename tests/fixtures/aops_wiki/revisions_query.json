@@ -1,0 +1,57 @@
+{
+  "batchcomplete": true,
+  "query": {
+    "normalized": [
+      {
+        "from": "2099_AMC_10A_Problems/Problem_1",
+        "to": "2099 AMC 10A Problems/Problem 1"
+      },
+      {
+        "from": "2099_AMC_10A_Problems/Problem_2",
+        "to": "2099 AMC 10A Problems/Problem 2"
+      },
+      {
+        "from": "2099_AMC_10A_Problems/Problem_3",
+        "to": "2099 AMC 10A Problems/Problem 3"
+      }
+    ],
+    "redirects": [
+      {
+        "from": "2099 AMC 10A Problems/Problem 3",
+        "to": "2099 AMC 12A Problems/Problem 1"
+      }
+    ],
+    "pages": [
+      {
+        "pageid": 1,
+        "ns": 0,
+        "title": "2099 AMC 10A Problems/Problem 1",
+        "revisions": [
+          {
+            "revid": 1001
+          }
+        ]
+      },
+      {
+        "pageid": 2,
+        "ns": 0,
+        "title": "2099 AMC 10A Problems/Problem 2",
+        "revisions": [
+          {
+            "revid": 1002
+          }
+        ]
+      },
+      {
+        "pageid": 3,
+        "ns": 0,
+        "title": "2099 AMC 12A Problems/Problem 1",
+        "revisions": [
+          {
+            "revid": 1003
+          }
+        ]
+      }
+    ]
+  }
+}

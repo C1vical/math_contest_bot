@@ -1,0 +1,63 @@
+{
+  "parse": {
+    "title": "AMC 10 Problems and Solutions",
+    "pageid": 1234,
+    "links": [
+      {
+        "ns": 0,
+        "title": "2000 AMC 10 Problems",
+        "exists": true
+      },
+      {
+        "ns": 0,
+        "title": "2001 AMC 10 Problems",
+        "exists": true
+      },
+      {
+        "ns": 0,
+        "title": "2002 AMC 10A Problems",
+        "exists": true
+      },
+      {
+        "ns": 0,
+        "title": "2002 AMC 10B Problems",
+        "exists": true
+      },
+      {
+        "ns": 0,
+        "title": "2021 AMC 10A Problems",
+        "exists": true
+      },
+      {
+        "ns": 0,
+        "title": "2021 Fall AMC 10A Problems",
+        "exists": true
+      },
+      {
+        "ns": 0,
+        "title": "2098 AMC 10A Problems",
+        "exists": true
+      },
+      {
+        "ns": 0,
+        "title": "2099 AMC 10A Problems",
+        "exists": true
+      },
+      {
+        "ns": 0,
+        "title": "2100 AMC 10A Problems",
+        "exists": false
+      },
+      {
+        "ns": 0,
+        "title": "2099 AMC 10A Answer Key",
+        "exists": true
+      },
+      {
+        "ns": 0,
+        "title": "AMC 12 Problems and Solutions",
+        "exists": true
+      }
+    ]
+  }
+}
