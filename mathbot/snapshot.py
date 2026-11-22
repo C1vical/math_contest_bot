@@ -41,6 +41,8 @@ SNAPSHOT_PREFIX = "db"
 POINTER_KEY = f"{SNAPSHOT_PREFIX}/latest.json"
 DOWNLOAD_TIMEOUT = 120
 MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024 * 1024
+MAX_POINTER_BYTES = 64 * 1024
+CHUNK_BYTES = 1 << 20
 _SIDECARS = ("-wal", "-shm")
 
 
@@ -152,7 +154,9 @@ def _local_path(location: str) -> Path:
     return Path(location.removeprefix("file://"))
 
 
-def _read(location: str) -> bytes:
+def _chunks(location: str, limit: int):
+    """Yield the bytes at ``location`` (http(s) URL or local path) in chunks, at most ``limit`` in total."""
+    total = 0
     if _is_url(location):
         try:
             response = requests.get(location, timeout=DOWNLOAD_TIMEOUT, stream=True)
@@ -161,17 +165,40 @@ def _read(location: str) -> bytes:
         with response:
             if response.status_code != 200:
                 raise SnapshotError(f"download of {location} failed: HTTP {response.status_code}")
-            body = bytearray()
-            for chunk in response.iter_content(1 << 20):
-                body.extend(chunk)
-                if len(body) > MAX_SNAPSHOT_BYTES:
-                    raise SnapshotError(f"{location} is larger than {MAX_SNAPSHOT_BYTES} bytes")
-            return bytes(body)
+            try:
+                for chunk in response.iter_content(CHUNK_BYTES):
+                    total += len(chunk)
+                    if total > limit:
+                        raise SnapshotError(f"{location} is larger than {limit} bytes")
+                    yield chunk
+            except requests.RequestException as exc:
+                raise SnapshotError(f"download of {location} failed: {exc}") from exc
+        return
     path = _local_path(location)
     try:
-        return path.read_bytes()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(CHUNK_BYTES), b""):
+                total += len(chunk)
+                if total > limit:
+                    raise SnapshotError(f"{location} is larger than {limit} bytes")
+                yield chunk
     except OSError as exc:
         raise SnapshotError(f"cannot read {path}: {exc}") from exc
+
+
+def _read(location: str) -> bytes:
+    """The small ``latest.json`` pointer, in memory."""
+    return b"".join(_chunks(location, MAX_POINTER_BYTES))
+
+
+def _download(location: str, target: Path) -> str:
+    """Stream ``location`` into ``target`` without holding it in memory; returns its SHA-256."""
+    digest = hashlib.sha256()
+    with target.open("wb") as handle:
+        for chunk in _chunks(location, MAX_SNAPSHOT_BYTES):
+            digest.update(chunk)
+            handle.write(chunk)
+    return digest.hexdigest()
 
 
 def _resolve(pointer_location: str, key: str) -> str:
@@ -214,17 +241,14 @@ def fetch_snapshot(pointer_location: str, database: Path) -> dict | None:
     if database.is_file() and marker.is_file() and marker.read_text(encoding="utf-8").strip() == expected:
         return None
 
-    data = _read(_resolve(pointer_location, key))
-    actual = hashlib.sha256(data).hexdigest()
-    if actual != expected:
-        raise SnapshotError(f"snapshot {key} has SHA-256 {actual}, pointer says {expected}")
-
     database.parent.mkdir(parents=True, exist_ok=True)
     handle, tmp_name = tempfile.mkstemp(prefix=database.name + ".", suffix=".download", dir=database.parent)
     os.close(handle)
     tmp = Path(tmp_name)
     try:
-        tmp.write_bytes(data)
+        actual = _download(_resolve(pointer_location, key), tmp)
+        if actual != expected:
+            raise SnapshotError(f"snapshot {key} has SHA-256 {actual}, pointer says {expected}")
         inspect_database(tmp)
         _replace_database(tmp, database)
     finally:
