@@ -84,7 +84,7 @@ python -m mathbot refresh                      # every enabled contest
 python -m mathbot refresh --dry-run            # fetch + parse, write nothing, show the report
 python -m mathbot refresh --full               # re-fetch everything, ignoring caches
 python -m mathbot refresh --resume             # skip editions an interrupted run finished
-python -m mathbot validate                     # integrity + missing renders (exit 1 on errors)
+python -m mathbot validate                     # integrity, data quality, missing renders (exit 1 on errors)
 python -m mathbot coverage --csv gaps.csv      # what's missing: images, years, problem numbers, AMC choices
 python -m mathbot stats
 ```
@@ -96,7 +96,9 @@ How it behaves:
 
 - **Incremental by default.** CEMC pages and AoPS Community categories are skipped
   when their content hash is unchanged; AoPS Wiki pages are skipped when their
-  revision id is unchanged. HTTP responses are cached in `data/http_cache` with a
+  revision id is unchanged. A CEMC page's fingerprint also includes the parser
+  version (`PARSER_VERSION` in `sources/cemc.py`), so after a parser fix an ordinary
+  incremental run re-parses every page once, from the HTTP cache where possible. HTTP responses are cached in `data/http_cache` with a
   TTL and revalidated with ETag / Last-Modified.
 - **Corrections replace stale data.** A changed statement updates the row, bumps
   its `version` and keeps every earlier version in `problem_versions`.
@@ -156,6 +158,10 @@ The old database is opened read-only. The import:
 - maps the old contest names (`AMC10A`, `AIME1`, `Euclid`, `Gauss7`, `CMO`, ...) to
   the registry and lists any it can't map instead of guessing;
 - strips the `<h2>... Problem N</h2>` titles the old scrapers prepended;
+- cuts AoPS Wiki statements at the first heading or solution marker: the old
+  scraper sometimes kept going into the solutions (`<h3>Solution 1</h3>` and the
+  proof, a bare `Solution` paragraph, `==Video Solution`), which then showed up in
+  the problem image. 40 of the 7,310 rows were affected;
 - **ignores every old answer** (the old code only ever stored the default `"0"`);
 - rejects statements that are empty once the title is gone;
 - never overwrites a problem that a live ingest already stored, and never
@@ -165,7 +171,9 @@ The old database is opened read-only. The import:
   raw payload.
 
 A later live ingest replaces an imported statement through the normal versioned
-upsert. Rerunning the import is a no-op.
+upsert. Rerunning the import changes only rows whose cleaned statement differs
+(after an import-rule fix, such as the solution cutting above, run it again; the
+changed problems get a new version and `render` redraws them).
 
 Quality caveat: the old AoPS scraper stopped at the first element containing the
 word "solution", so a few statements may be cut short. `validate` warns about every
@@ -191,8 +199,15 @@ python -m mathbot cleanup --remote       # also delete superseded objects from t
   The previous renderer's image stays in use until the new one exists; only then does
   `cleanup` delete it. A failed render never takes an image away.
 - Paths are deterministic and include the hash, e.g.
-  `pascal/pascal-2019-p03-423bd5e391b5-r6-w1000-s2.png`, so a new render never
+  `pascal/pascal-2019-p03-423bd5e391b5-r7-w1000-s2.png`, so a new render never
   overwrites the one currently being served.
+- **Layout (template 7).** AoPS formula PNGs are drawn at 1.25x so they match the
+  20 px text (the files are about 2.5x their HTML size, so they stay sharp);
+  diagrams keep their size. A block wider than the page is shrunk to fit instead of
+  being cut off. Before/after examples are in [docs/render-samples](docs/render-samples).
+- **Robust browser pool.** A page that crashes or times out is replaced, so one bad
+  problem never breaks the renders after it. An unexpected error building one page
+  fails only that problem.
 - **Offline and deterministic.** MathJax 3.2.2 (SVG output) and the Computer
   Modern fonts are pinned by URL and SHA-256 in
   [mathbot/render/vendor.py](mathbot/render/vendor.py), installed once by
@@ -322,18 +337,32 @@ starts the health server and then connects. Slash commands:
 
 | Command | What it does |
 |---|---|
-| `/problem contest year number` | A specific problem. Contest autocompletes; years autocomplete from the database. |
-| `/random [contest] [year] [number] [source]` | Random problem; `contest` may be a family such as `PCF`. |
+| `/problem contest [year] [number]` | A specific problem. Contest autocompletes; years autocomplete from the database. Everything can also go in the contest box: `AMC 10A 2019 #25`, `2024 AIME I P5`, `amc10a-2019-p25`. |
+| `/random [contest] [year] [year_from] [year_to] [number] [difficulty] [source]` | Random problem; `contest` may be a family such as `PCF` or a source such as `cemc`. |
 | `/contests` | Every contest with years and counts, paginated. |
 | `/contest contest` | Years available, format, aliases. |
 | `/stats` | Totals by source and largest contests. |
 | `/help [command]` | Help. |
 | `/admin status`, `/admin sync` | Admin only: validation summary and last ingestion run; re-sync commands. |
 
-Problems that have a stored answer get a **Show answer** button. The answer is
-shown privately and in a spoiler. Problems with a stored official solution (CEMC)
-get an **Official solution** link. Problem commands have a short per-user cooldown
-(`COMMAND_COOLDOWN_SECONDS`).
+Under every problem:
+
+* **Show answer** (when an answer is stored): shown privately, in a spoiler.
+* **Official solution** (CEMC) and **Source**: links to the original pages.
+* **Previous / Next**: the neighbouring problems of the same contest and year.
+* **Another random**: the same `/random` filters again (under `/problem`, another
+  problem from that contest).
+
+The buttons carry what they need in their Discord `custom_id`, so messages posted
+before a restart keep working. Presses obey `ALLOWED_CHANNEL_IDS` / `ALLOWED_ROLE_IDS`.
+Commands and button presses each have a short per-user cooldown
+(`COMMAND_COOLDOWN_SECONDS`, admins exempt).
+
+`/random` details: `difficulty` is the problem's place in its paper (first, middle
+or last third; for six-problem two-day olympiads, its place within the day), since
+contests order problems by difficulty. A problem that has an image is chosen
+whenever one matches, so the text fallback is rare, and the last 50 problems shown
+in a channel are skipped while others match.
 
 Invalid contests, years and numbers get an ephemeral error that names what is
 available. Any unexpected error is logged with a short reference code that is
@@ -398,7 +427,12 @@ automatically. Apart from the integer primary keys, the SQL is portable to Postg
 
 IDs are deterministic (`<series>-<year>-p<NN>`). `(series, year)` and
 `(edition, number)` are unique, and statements cannot be empty (a `CHECK`
-constraint). Indexes cover lookups by year, number, content hash and render status.
+constraint). Indexes cover lookups by year, number, content hash and render status,
+and two covering indexes (migration 4) keep `/random` at about 15 ms on the full
+database. Migration 3 adds a few unused columns to `source_records`: an experiment
+that was reverted had already applied it to a real database, so it is kept so that
+every database at version 3 has the same schema. Migrations take the write lock
+first, so the bot and a CLI command starting at once cannot apply one twice.
 A legacy `math_problems` table in an old database is left untouched. Rebuild the new
 tables by running `refresh` (the CEMC portion takes about 2 minutes; rendering it
 takes about 1.5 minutes).
@@ -491,6 +525,7 @@ mathbot/
   cli/               python -m mathbot ...: ingest.py (getting problems), images.py
                      (downloading, rendering, publishing images), database.py
                      (validate, coverage, snapshots), common.py (shared helpers)
-  bot/               app startup, health, policy, images, ui, cogs/
+  bot/               app startup, health, policy, images, ui (embeds, buttons),
+                     query (parsing "AMC 10A 2019 #25", /random filters in button ids), cogs/
 main.py              python main.py runs the bot (same as python -m mathbot bot)
 ```
