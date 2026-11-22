@@ -33,6 +33,7 @@ from mathbot.sources.base import SourceAdapter
 log = logging.getLogger(__name__)
 
 COUNTERS = ("discovered", "inserted", "updated", "skipped", "failed", "invalid")
+MAX_REPORTED_ERRORS = 40  # failures listed in the terminal report; all are in ingestion_errors
 
 
 @dataclass
@@ -104,15 +105,15 @@ class IngestReport:
             lines.append(f"  BLOCKED {provider}: {reason}")
         if self.errors:
             lines.append(f"  errors ({len(self.errors)}):")
-            for e in self.errors[:40]:
+            for e in self.errors[:MAX_REPORTED_ERRORS]:
                 where = " ".join(
                     str(part)
                     for part in (e.series_key, e.year, f"#{e.number}" if e.number is not None else None)
                     if part is not None
                 )
                 lines.append(f"    [{e.stage}] {where}: {e.error}" + (f"  <{e.url}>" if e.url else ""))
-            if len(self.errors) > 40:
-                lines.append(f"    ... {len(self.errors) - 40} more (see ingestion_errors table)")
+            if len(self.errors) > MAX_REPORTED_ERRORS:
+                lines.append(f"    ... {len(self.errors) - MAX_REPORTED_ERRORS} more (see ingestion_errors table)")
         return "\n".join(lines)
 
 
@@ -128,7 +129,7 @@ class Ingestor:
         self.repo = repo
         self.adapters = adapters
         self.concurrency = max(1, concurrency)
-        self.progress = progress or (lambda message: None)
+        self.progress = progress or (lambda _message: None)
 
     def discover(self, selection: Iterable[ContestSeries]) -> tuple[dict[str, list[EditionRef]], IngestReport]:
         """Discover editions for each series without fetching problems or writing."""
@@ -273,7 +274,8 @@ class Ingestor:
             for s, r in jobs
         }
 
-        with ThreadPoolExecutor(max_workers=self.concurrency, thread_name_prefix="ingest") as pool:
+        pool = ThreadPoolExecutor(max_workers=self.concurrency, thread_name_prefix="ingest")
+        try:
             futures: dict[Future[EditionResult], tuple[ContestSeries, EditionRef]] = {}
             for series, ref in jobs:
                 future = pool.submit(self._guarded_fetch, series, ref, numbers, known[(series.key, ref.year)], report)
@@ -292,7 +294,20 @@ class Ingestor:
                     report.editions["failed"] += 1
                     self._error(report, series, ref.year, ProblemFailure(None, exc.url, "fetch", str(exc)))
                     continue
+                except Exception as exc:  # a parser met markup it does not expect: fail this edition only
+                    log.exception("adapter crashed", extra={"contest": series.key, "year": ref.year})
+                    report.editions["failed"] += 1
+                    failure = ProblemFailure(None, ref.source_url, "parse", f"{type(exc).__name__}: {exc}", True)
+                    self._error(report, series, ref.year, failure)
+                    continue
                 self._store(series, result, dry_run, partial, report)
+        except BaseException:
+            # Ctrl+C or an unexpected error: drop the editions not started yet. (Leaving the
+            # pool through "with" would wait for every queued fetch to run first.) Fetches
+            # already in flight finish in the background; they never write to the database.
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        pool.shutdown(wait=True)
 
     def _guarded_fetch(
         self,
@@ -357,8 +372,7 @@ class Ingestor:
             stored += 1
             report.bump(series.key, {INSERTED: "inserted", UPDATED: "updated", UNCHANGED: "skipped"}[outcome])
 
-        hard_failures = [f for f in result.failures if f.number is not None or f.invalid or f.stage != "fetch"]
-        clean = not hard_failures and (stored or result.skipped_numbers)
+        clean = not any(not f.warning for f in result.failures) and (stored or result.skipped_numbers)
         if not clean:
             report.editions["failed"] += 1
         if not dry_run and clean and not partial:

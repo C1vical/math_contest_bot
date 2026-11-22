@@ -155,6 +155,7 @@ def expected_years(registry: ContestRegistry, today: date) -> dict[str, list[int
 def coverage(
     repo: Repository, registry: ContestRegistry, renderer_version: str, *, today: date | None = None
 ) -> CoverageReport:
+    """Collect every gap (see the module docstring). Read-only."""
     conn = repo.conn
     report = CoverageReport(renderer_version)
     enabled = {s.key for s in registry.all()}

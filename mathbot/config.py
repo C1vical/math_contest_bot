@@ -47,7 +47,10 @@ class StorageSettings:
     secret_access_key: str | None = None
     key_prefix: str = ""
     public_base_url: str | None = None  # where the bot downloads images from
-    legacy_keys: bool = True  # also try the pre-2.0 "<year>_<contest>_<n>.png" key
+
+    def object_key(self, key: str) -> str:
+        """``key`` with ``S3_KEY_PREFIX`` in front: the name of the object in the bucket."""
+        return f"{self.key_prefix}/{key}" if self.key_prefix else key
 
 
 @dataclass(frozen=True)
@@ -103,10 +106,10 @@ def _get(env: Mapping[str, str], name: str) -> str | None:
     return value or None
 
 
-def _int(env: Mapping[str, str], name: str, default: int | None = None, *, minimum: int | None = None) -> int | None:
+def _optional_int(env: Mapping[str, str], name: str, *, minimum: int | None = None) -> int | None:
     raw = _get(env, name)
     if raw is None:
-        return default
+        return None
     try:
         value = int(raw)
     except ValueError:
@@ -114,6 +117,11 @@ def _int(env: Mapping[str, str], name: str, default: int | None = None, *, minim
     if minimum is not None and value < minimum:
         raise ConfigError(f"{name} must be >= {minimum}, got {value}")
     return value
+
+
+def _int(env: Mapping[str, str], name: str, default: int, *, minimum: int | None = None) -> int:
+    value = _optional_int(env, name, minimum=minimum)
+    return default if value is None else value
 
 
 def _float(env: Mapping[str, str], name: str, default: float, *, minimum: float = 0.0) -> float:
@@ -193,7 +201,6 @@ def load_settings(env: Mapping[str, str] | None = None, *, load_dotenv_file: boo
         secret_access_key=_get(env, "S3_SECRET_ACCESS_KEY"),
         key_prefix=(_get(env, "S3_KEY_PREFIX") or "").strip("/"),
         public_base_url=(_get(env, "IMAGE_BASE_URL") or "").rstrip("/") or None,
-        legacy_keys=_bool(env, "IMAGE_LEGACY_KEYS", True),
     )
     if backend == "s3":
         missing = [
@@ -211,7 +218,7 @@ def load_settings(env: Mapping[str, str] | None = None, *, load_dotenv_file: boo
     http = HttpSettings(
         user_agent=_get(env, "HTTP_USER_AGENT") or DEFAULT_USER_AGENT,
         timeout=_float(env, "HTTP_TIMEOUT", 30.0, minimum=1.0),
-        max_retries=_int(env, "HTTP_MAX_RETRIES", 4, minimum=0) or 0,
+        max_retries=_int(env, "HTTP_MAX_RETRIES", 4, minimum=0),
         backoff_base=_float(env, "HTTP_BACKOFF_BASE", 1.0),
         backoff_cap=_float(env, "HTTP_BACKOFF_CAP", 60.0),
         min_interval=_float(env, "HTTP_MIN_INTERVAL", 1.0),
@@ -224,26 +231,25 @@ def load_settings(env: Mapping[str, str] | None = None, *, load_dotenv_file: boo
     )
 
     render = RenderSettings(
-        concurrency=_int(env, "RENDER_CONCURRENCY", 4, minimum=1) or 4,
-        retries=_int(env, "RENDER_RETRIES", 2, minimum=0) or 0,
-        timeout_ms=_int(env, "RENDER_TIMEOUT_MS", 30_000, minimum=1000) or 30_000,
+        concurrency=_int(env, "RENDER_CONCURRENCY", 4, minimum=1),
+        retries=_int(env, "RENDER_RETRIES", 2, minimum=0),
+        timeout_ms=_int(env, "RENDER_TIMEOUT_MS", 30_000, minimum=1000),
         device_scale_factor=_float(env, "RENDER_SCALE", 2.0, minimum=0.5),
-        viewport_width=_int(env, "RENDER_WIDTH", 1000, minimum=320) or 1000,
+        viewport_width=_int(env, "RENDER_WIDTH", 1000, minimum=320),
         asset_ttl=_float(env, "ASSET_TTL", 30 * 24 * 3600.0),
     )
 
     bot = BotSettings(
         token=_get(env, "DISCORD_TOKEN"),
-        # CHANNEL_ID is the pre-2.0 name and is still honoured.
-        allowed_channel_ids=_id_set(env, "ALLOWED_CHANNEL_IDS", "CHANNEL_ID"),
+        allowed_channel_ids=_id_set(env, "ALLOWED_CHANNEL_IDS"),
         allowed_role_ids=_id_set(env, "ALLOWED_ROLE_IDS"),
         admin_role_ids=_id_set(env, "ADMIN_ROLE_IDS"),
         admin_user_ids=_id_set(env, "ADMIN_USER_IDS"),
-        guild_id=_int(env, "GUILD_ID"),
+        guild_id=_optional_int(env, "GUILD_ID"),
         sync_commands=_bool(env, "SYNC_COMMANDS", True),
-        announce_channel_id=_int(env, "ANNOUNCE_CHANNEL_ID"),
+        announce_channel_id=_optional_int(env, "ANNOUNCE_CHANNEL_ID"),
         health_host=_get(env, "HEALTH_HOST") or "0.0.0.0",
-        health_port=_int(env, "PORT", 8080, minimum=1) or 8080,
+        health_port=_int(env, "PORT", 8080, minimum=1),
         health_enabled=_bool(env, "HEALTH_ENABLED", True),
         command_cooldown=_float(env, "COMMAND_COOLDOWN_SECONDS", 3.0),
     )
@@ -257,7 +263,7 @@ def load_settings(env: Mapping[str, str] | None = None, *, load_dotenv_file: boo
         database_snapshot_url=_get(env, "DATABASE_SNAPSHOT_URL"),
         http_cache_dir=_path(env, "HTTP_CACHE_DIR", data_dir / "http_cache"),
         log_level=(_get(env, "LOG_LEVEL") or "INFO").upper(),
-        ingest_concurrency=_int(env, "INGEST_CONCURRENCY", 2, minimum=1) or 2,
+        ingest_concurrency=_int(env, "INGEST_CONCURRENCY", 2, minimum=1),
         enable_contests=_name_set(env, "ENABLE_CONTESTS"),
         disable_contests=_name_set(env, "DISABLE_CONTESTS"),
         http=http,

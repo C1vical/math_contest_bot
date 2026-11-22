@@ -1,4 +1,4 @@
-"""/contests, /contest (alias /info) and /stats."""
+"""/contests, /contest and /stats."""
 
 from __future__ import annotations
 
@@ -50,23 +50,25 @@ class Contests(commands.Cog):
     def __init__(self, bot: MathBot) -> None:
         self.bot = bot
 
-    async def contest_autocomplete(self, interaction: discord.Interaction, current: str):
-        return ui.contest_choices(self.bot.registry, current)
-
     @app_commands.command(name="contests", description="List the contests the bot knows")
     @allowed_here()
     async def contests(self, interaction: discord.Interaction) -> None:
         stats = await self.bot.db.call(lambda repo: repo.series_stats())
         await ui.send_paginated(interaction, contest_pages(stats))
 
-    async def _info(self, interaction: discord.Interaction, contest: str) -> None:
+    @app_commands.command(name="contest", description="Details and available years for one contest")
+    @app_commands.describe(contest="Contest name, e.g. AMC10A, AIME I, Euclid")
+    @app_commands.autocomplete(contest=ui.contest_autocomplete)
+    @allowed_here()
+    async def contest(self, interaction: discord.Interaction, contest: str) -> None:
         series = self.bot.registry.resolve(contest)
         if series is None:
             embed = ui.unknown_contest_embed(self.bot.registry, contest)
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
-        years = await self.bot.db.call(lambda repo: repo.years_for(series.key))
-        stats = await self.bot.db.call(lambda repo: [s for s in repo.series_stats() if s.key == series.key])
+        years, stats = await self.bot.db.call(
+            lambda repo: (repo.years_for(series.key), [s for s in repo.series_stats() if s.key == series.key])
+        )
         loaded = stats[0].problems if stats else 0
 
         embed = discord.Embed(title=f"{series.name} ({series.key})", color=ui.COLOR)
@@ -85,25 +87,10 @@ class Contests(commands.Cog):
             embed.add_field(name="Also accepted", value=", ".join(f"`{a}`" for a in series.aliases), inline=False)
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="contest", description="Details and available years for one contest")
-    @app_commands.describe(contest="Contest name, e.g. AMC10A, AIME I, Euclid")
-    @app_commands.autocomplete(contest=contest_autocomplete)
-    @allowed_here()
-    async def contest(self, interaction: discord.Interaction, contest: str) -> None:
-        await self._info(interaction, contest)
-
-    @app_commands.command(name="info", description="Details and available years for one contest (same as /contest)")
-    @app_commands.describe(contest="Contest name, e.g. AMC10A, AIME I, Euclid")
-    @app_commands.autocomplete(contest=contest_autocomplete)
-    @allowed_here()
-    async def info(self, interaction: discord.Interaction, contest: str) -> None:
-        await self._info(interaction, contest)
-
     @app_commands.command(name="stats", description="How many problems are loaded")
     @allowed_here()
     async def stats(self, interaction: discord.Interaction) -> None:
-        totals = await self.bot.db.call(lambda repo: repo.totals())
-        stats = await self.bot.db.call(lambda repo: repo.series_stats(include_empty=False))
+        totals, stats = await self.bot.db.call(lambda repo: (repo.totals(), repo.series_stats(include_empty=False)))
         embed = discord.Embed(title="Database statistics", color=ui.COLOR)
         embed.add_field(name="Problems", value=f"{totals['problems']:,}", inline=True)
         embed.add_field(name="Contest sittings", value=f"{totals['editions']:,}", inline=True)

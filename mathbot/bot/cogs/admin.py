@@ -33,7 +33,9 @@ class Admin(commands.GroupCog, group_name="admin", group_description="Bot mainte
         await interaction.response.defer(ephemeral=True, thinking=True)
         settings = self.bot.settings
         report = await self.bot.db.call(
-            lambda repo: validate(repo, settings.renders_dir, renderer_version(settings.render))
+            lambda repo: validate(
+                repo, settings.renders_dir, renderer_version(settings.render), registry=self.bot.registry
+            )
         )
         last = await self.bot.db.call(lambda repo: dict(row) if (row := repo.last_run()) else None)
 

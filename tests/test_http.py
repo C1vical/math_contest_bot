@@ -15,34 +15,7 @@ from mathbot.http import (
     TransportError,
     is_challenge,
 )
-
-
-class FakeResponse:
-    def __init__(self, status=200, body=b"ok", headers=None, url="https://example.org/page"):
-        self.status_code = status
-        self.content = body
-        self.headers = {"content-type": "text/html; charset=utf-8", **(headers or {})}
-        self.url = url
-
-
-class FakeSession:
-    """Plays back a script of responses / exceptions; robots.txt is answered separately."""
-
-    def __init__(self, script, robots: str | int = 404):
-        self.script = list(script)
-        self.robots = robots
-        self.requests: list[tuple[str, dict]] = []
-
-    def get(self, url, params=None, headers=None, timeout=None):
-        if url.endswith("/robots.txt"):
-            if isinstance(self.robots, int):
-                return FakeResponse(self.robots, b"", url=url)
-            return FakeResponse(200, self.robots.encode(), {"content-type": "text/plain"}, url=url)
-        self.requests.append((url, dict(headers or {})))
-        item = self.script.pop(0)
-        if isinstance(item, Exception):
-            raise item
-        return item
+from tests.conftest import FakeResponse, FakeSession
 
 
 class Clock:
@@ -222,3 +195,68 @@ def test_robots_specific_agent_group_and_anchors():
     assert rules.allowed("math-contest-bot", "/files/a.pdf?x=1") is True
     assert rules.allowed("math-contest-bot", "/core/theme.css") is True
     assert rules.allowed("math-contest-bot", "/core/theme.js") is False
+
+
+def test_atomic_write_retries_while_another_process_holds_the_file(tmp_path, monkeypatch):
+    """Windows refuses the rename while e.g. an antivirus scanner has the new file open."""
+    import os
+
+    from mathbot import http
+
+    real_replace, calls = os.replace, []
+
+    def held_twice(source, target):
+        calls.append(source)
+        if len(calls) <= 2:
+            raise PermissionError(13, "Access is denied")
+        real_replace(source, target)
+
+    monkeypatch.setattr(http, "REPLACE_RETRY_DELAY", 0)
+    monkeypatch.setattr(os, "replace", held_twice)
+    http.atomic_write_bytes(tmp_path / "a.png", b"data")
+    assert (tmp_path / "a.png").read_bytes() == b"data" and len(calls) == 3
+    assert [p.name for p in tmp_path.iterdir()] == ["a.png"]
+
+    def always_held(source, target):
+        calls.append(source)
+        raise PermissionError(13, "Access is denied")
+
+    calls.clear()
+    monkeypatch.setattr(os, "replace", always_held)
+    with pytest.raises(PermissionError):
+        http.atomic_write_bytes(tmp_path / "b.png", b"data")
+    assert len(calls) == http.REPLACE_ATTEMPTS
+    assert [p.name for p in tmp_path.iterdir()] == ["a.png"]  # no temp file left behind
+
+
+def test_robots_rules_apply_to_query_parameters_passed_separately():
+    """The MediaWiki API and the CEMC listing pass their query as ``params``; a robots.txt
+    rule on the query string must still be honoured."""
+    client, session, _ = make_client([FakeResponse()], robots="User-agent: *\nDisallow: /*?action=\n")
+    with pytest.raises(RobotsDisallowedError):
+        client.get("https://example.org/w/api.php", {"action": "parse", "page": "X"})
+    assert session.requests == []
+    client.get("https://example.org/w/api.php", {"page": "X"})  # no action=: allowed
+    assert len(session.requests) == 1
+
+
+@pytest.mark.parametrize(
+    "error, retried",
+    [
+        (requests.exceptions.ChunkedEncodingError("connection broken"), True),
+        (requests.exceptions.ContentDecodingError("bad gzip"), True),
+        (requests.exceptions.InvalidURL("bad url"), False),
+    ],
+)
+def test_every_requests_failure_becomes_a_typed_error(error, retried):
+    client, session, _ = make_client([error] * 4)
+    with pytest.raises(TransportError):
+        client.get("https://example.org/page")
+    assert len(session.requests) == (4 if retried else 1)
+
+
+def test_unknown_charset_label_falls_back_to_utf8():
+    from mathbot.http import Response
+
+    response = Response("https://example.org", 200, {"content-type": "text/html; charset=utf8mb4"}, "é".encode())
+    assert response.text == "é"

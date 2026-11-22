@@ -77,7 +77,13 @@ MAX_LISTING_PAGES = 50
 
 _QUESTION_HEADING = re.compile(r"^\s*(?:Part\s+([A-Z])\b|Questions?\b)", re.IGNORECASE)
 _DECLARED_COUNT = re.compile(r"Number of Questions:\s*(\d+)", re.IGNORECASE)
-_ANSWER = re.compile(r"^\s*Answer:\s*\(?\s*([A-Za-z]|-?[\d.,/]+)\s*\)?\s*\.?\s*$")
+# "Answer: (D)" / "Answer: 23". Since 2024 the label is "<span class="smallcaps">Answer</span>: (D)"
+# (text "Answer : (D)") and numeric Part C answers are TeX: "Answer : \(11\)".
+_ANSWER = re.compile(r"^\s*Answer\s*:\s*(?:\\\(\s*)?\(?\s*([A-Za-z]|-?[\d.,/]+)\s*\)?\s*(?:\\\)\s*)?\.?\s*$")
+
+# Part of every edition fingerprint, so incremental runs re-parse unchanged pages after a
+# parser change. Bump it whenever parsing output can change for an existing page.
+PARSER_VERSION = 2  # 2: answers in the 2024+ "smallcaps" format
 
 # (series key, year) -> 1-based indexes of parsed items that are really a
 # continuation of the previous question (verified by reading the page).
@@ -142,6 +148,12 @@ def _html_link(cell: Tag | None) -> str | None:
     return None
 
 
+def _sibling_solution_url(contest_url: str) -> str | None:
+    """``.../2020PascalContest.html`` -> ``.../2020PascalSolution.html`` (None for other names)."""
+    head, sep, tail = contest_url.rpartition("Contest.html")
+    return f"{head}Solution.html{tail}" if sep and not tail else None
+
+
 def _abs(href: str | None) -> str | None:
     return urljoin(BASE_URL, href) if href else None
 
@@ -150,15 +162,22 @@ def _inner_html(tag: Tag) -> str:
     return tag.decode_contents().strip()
 
 
-def parse_contest_page(html: str, *, merge_into_previous: frozenset[int] = frozenset()) -> ContestPage:
-    """Extract ``(number, section, html)`` for every question on a contest page."""
+def _parse_page(html: str) -> tuple[BeautifulSoup, Tag | None]:
+    """The document and its ``<body>`` (None if missing), with the pages' "show" buttons removed."""
     # html5lib repairs the unbalanced lists found on some pages the way a browser would.
     soup = BeautifulSoup(html, "html5lib")
     body = soup.body
+    if body is not None:
+        for button in body.find_all("button"):
+            button.decompose()
+    return soup, body
+
+
+def parse_contest_page(html: str, *, merge_into_previous: frozenset[int] = frozenset()) -> ContestPage:
+    """Extract ``(number, section, html)`` for every question on a contest page."""
+    soup, body = _parse_page(html)
     if body is None:
         raise CemcParseError("page has no <body>")
-    for button in body.find_all("button"):
-        button.decompose()
 
     declared = _DECLARED_COUNT.search(body.get_text(" "))
     page = ContestPage(
@@ -263,12 +282,9 @@ def _solution_items(html: str) -> list[tuple[int, Tag]]:
     twice (``<ol><ol><li>...``, e.g. 2018 Pascal), so a nested list that comes before
     any item of its parent holds the items.
     """
-    soup = BeautifulSoup(html, "html5lib")
-    body = soup.body
+    _, body = _parse_page(html)
     if body is None:
         return []
-    for button in body.find_all("button"):
-        button.decompose()
     items: list[tuple[int, Tag]] = []
     number = 0
 
@@ -292,13 +308,21 @@ def _solution_items(html: str) -> list[tuple[int, Tag]]:
 
 def parse_solutions(html: str) -> dict[int, str]:
     """Official solution per question from a solutions page: ``{question number: inner html}``."""
-    return {number: _inner_html(li) for number, li in _solution_items(html)}
+    return _solutions(_solution_items(html))
 
 
 def parse_answers(html: str) -> dict[int, str]:
     """Answer key from a solutions page: ``{question number: "D"}``. Empty if none are stated."""
+    return _answers(_solution_items(html))
+
+
+def _solutions(items: list[tuple[int, Tag]]) -> dict[int, str]:
+    return {number: _inner_html(li) for number, li in items}
+
+
+def _answers(items: list[tuple[int, Tag]]) -> dict[int, str]:
     answers: dict[int, str] = {}
-    for number, li in _solution_items(html):
+    for number, li in items:
         # The answer is normally the last paragraph, but stray trailing ones occur.
         for paragraph in reversed(li.find_all("p", recursive=False)):
             match = _ANSWER.match(paragraph.get_text(" ", strip=True))
@@ -314,10 +338,9 @@ def parse_answers(html: str) -> dict[int, str]:
 class CemcAdapter:
     provider = CEMC
 
-    def __init__(self, client: PoliteClient, *, refresh: bool = False, fetch_answers: bool = True) -> None:
+    def __init__(self, client: PoliteClient, *, refresh: bool = False) -> None:
         self.client = client
         self.refresh = refresh
-        self.fetch_answers = fetch_answers
         self._listing_cache: dict[int, list[ListingRow]] = {}
 
     def _listing(self, category_id: int) -> list[ListingRow]:
@@ -376,6 +399,10 @@ class CemcAdapter:
                     source_identifier=url.rsplit("/", 1)[-1],
                     expected_problems=series.expected_problems(year),
                     origin="fallback",
+                    # The manifest has only contest URLs; the solutions page sits beside the
+                    # contest page (2020 Pascal is served this way but missing from the listing).
+                    # If it is not there, that is a warning, not a failed edition.
+                    extra={"solution_url": _sibling_solution_url(url)},
                 )
         return [editions[year] for year in sorted(editions)]
 
@@ -388,8 +415,8 @@ class CemcAdapter:
         only_numbers: frozenset[int] | None = None,
     ) -> EditionResult:
         response = self.client.get(edition.source_url, refresh=self.refresh)
-        result = EditionResult(edition=edition, source_hash=response.sha256)
-        if known is not None and known.source_hash == response.sha256:
+        result = EditionResult(edition=edition, source_hash=f"{response.sha256}+parser{PARSER_VERSION}")
+        if known is not None and known.source_hash == result.source_hash:
             result.unchanged = True
             return result
 
@@ -450,23 +477,30 @@ class CemcAdapter:
         exactly one per question, so a mis-parsed page can never attach the wrong solution.
         """
         solution_url = edition.extra.get("solution_url")
-        if not (self.fetch_answers and solution_url):
+        if not solution_url:
             return {}, {}
         try:
             html = self.client.get(str(solution_url), refresh=self.refresh).text
         except HttpError as exc:
-            result.failures.append(ProblemFailure(None, str(solution_url), "fetch", f"solutions unavailable: {exc}"))
+            result.failures.append(
+                ProblemFailure(None, str(solution_url), "fetch", f"solutions unavailable: {exc}", warning=True)
+            )
             return {}, {}
-        answers = parse_answers(html) if series.source.get("multiple_choice") else {}
-        solutions = parse_solutions(html)
+        items = _solution_items(html)  # one html5lib parse for both
+        answers = _answers(items) if series.source.get("multiple_choice") else {}
+        solutions = _solutions(items)
         if sorted(solutions) != sorted(numbers):
+            # The numbering cannot be trusted, so neither the solutions nor the answers
+            # taken from the same items are attached to any question.
             result.failures.append(
                 ProblemFailure(
                     None,
                     str(solution_url),
-                    "fetch",
-                    f"solutions page has {len(solutions)} entries for {len(numbers)} questions; solutions not stored",
+                    "validate",
+                    f"solutions page has {len(solutions)} entries for {len(numbers)} questions; "
+                    "solutions and answers not stored",
+                    warning=True,
                 )
             )
-            solutions = {}
+            return {}, {}
         return answers, solutions

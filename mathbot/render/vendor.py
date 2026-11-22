@@ -77,6 +77,7 @@ class RenderAssetsMissing(RuntimeError):
 
 
 def asset_url(path: str) -> str:
+    """The URL the render page uses for a pinned file (intercepted by the renderer)."""
     return f"{ASSET_ORIGIN}/{path}"
 
 
@@ -84,17 +85,18 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _is_installed(root: Path, item: VendoredFile) -> bool:
+    path = root / item.path
+    return path.is_file() and _sha256(path.read_bytes()) == item.sha256
+
+
 def missing_assets(root: Path) -> list[str]:
     """Paths that are absent or whose hash does not match the pin."""
-    problems = []
-    for item in VENDORED:
-        path = root / item.path
-        if not path.is_file() or _sha256(path.read_bytes()) != item.sha256:
-            problems.append(item.path)
-    return problems
+    return [item.path for item in VENDORED if not _is_installed(root, item)]
 
 
 def require_assets(root: Path) -> None:
+    """Raise :class:`RenderAssetsMissing` unless every pinned file is installed and intact."""
     missing = missing_assets(root)
     if missing:
         raise RenderAssetsMissing(
@@ -107,8 +109,7 @@ def install_assets(root: Path, client: PoliteClient) -> dict[str, str]:
     """Download every pinned file that is missing or wrong. Returns ``{path: outcome}``."""
     outcomes: dict[str, str] = {}
     for item in VENDORED:
-        target = root / item.path
-        if target.is_file() and _sha256(target.read_bytes()) == item.sha256:
+        if _is_installed(root, item):
             outcomes[item.path] = "present"
             continue
         try:
@@ -120,20 +121,35 @@ def install_assets(root: Path, client: PoliteClient) -> dict[str, str]:
             raise RenderAssetsMissing(
                 f"{item.url} has SHA-256 {digest}, expected {item.sha256}; refusing to install it"
             )
-        atomic_write_bytes(target, data)
+        atomic_write_bytes(root / item.path, data)
         outcomes[item.path] = "installed"
         log.info("render asset installed", extra={"path": item.path, "bytes": len(data)})
     return outcomes
 
 
-def read_asset(root: Path, path: str) -> tuple[bytes, str] | None:
-    """Bytes and content type for a request path, only if it is a verified pinned file."""
-    item = BY_PATH.get(path)
-    if item is None:
-        return None
-    file = root / item.path
-    try:
-        data = file.read_bytes()
-    except OSError:
-        return None
-    return (data, item.content_type) if _sha256(data) == item.sha256 else None
+class AssetReader:
+    """Serves the pinned files to the render page, each read and verified once.
+
+    Every rendered page loads the 2 MB MathJax bundle; reading and hashing it again
+    for each of thousands of pages was wasted work.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self._verified: dict[str, tuple[bytes, str]] = {}
+
+    def read(self, path: str) -> tuple[bytes, str] | None:
+        """Bytes and content type for a request path, only if it is a verified pinned file."""
+        if path in self._verified:
+            return self._verified[path]
+        item = BY_PATH.get(path)
+        if item is None:
+            return None
+        try:
+            data = (self.root / item.path).read_bytes()
+        except OSError:
+            return None
+        if _sha256(data) != item.sha256:
+            return None
+        self._verified[path] = (data, item.content_type)
+        return self._verified[path]

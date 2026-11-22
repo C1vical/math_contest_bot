@@ -7,7 +7,6 @@ from mathbot.contests import (
     ContestRegistry,
     UnknownContestError,
     edition_id,
-    legacy_image_key,
     normalize_alias,
     problem_id,
 )
@@ -114,11 +113,6 @@ def test_ids_are_deterministic():
     assert edition_id("AMC10A", 2024) == "amc10a-2024"
     assert problem_id("AMC10A", 2024, 5) == "amc10a-2024-p05"
     assert problem_id("AHSME", 1955, 50) == "ahsme-1955-p50"
-
-
-def test_legacy_image_keys_match_the_old_bot(registry):
-    assert legacy_image_key(registry.get("AMC10A"), 2024, 5) == "2024_AMC10A_5.png"
-    assert legacy_image_key(registry.get("EUCLID"), 2019, 3) == "2019_Euclid_3.png"
 
 
 def test_normalize_alias():

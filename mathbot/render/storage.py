@@ -11,7 +11,7 @@ and credentials come only from configuration.
 
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Protocol
 
 from mathbot.config import Settings, StorageSettings
@@ -23,11 +23,11 @@ class StorageError(Exception):
 
 
 class Storage(Protocol):
+    """Where rendered images and database snapshots are published."""
+
     name: str
 
     def put(self, key: str, data: bytes, content_type: str, *, cache_control: str | None = None) -> None: ...
-    def get(self, key: str) -> bytes: ...
-    def exists(self, key: str) -> bool: ...
     def delete(self, key: str) -> None: ...
 
 
@@ -38,22 +38,16 @@ class LocalStorage:
         self.root = root
 
     def _path(self, key: str) -> Path:
-        path = (self.root / key).resolve()
-        if self.root.resolve() not in path.parents:
+        # Checked on the key itself, not with Path.resolve(): on Windows resolve() can
+        # return a "\\?\C:\..." path while another thread creates the same directory,
+        # which made parallel uploads report valid keys as escaping the root.
+        parts = PurePosixPath(key.replace("\\", "/")).parts
+        if not parts or key.startswith(("/", "\\")) or ":" in key or any(p in {"..", "."} for p in parts):
             raise StorageError(f"key escapes the storage root: {key!r}")
-        return path
+        return self.root.joinpath(*parts)
 
     def put(self, key: str, data: bytes, content_type: str, *, cache_control: str | None = None) -> None:
         atomic_write_bytes(self._path(key), data)
-
-    def get(self, key: str) -> bytes:
-        try:
-            return self._path(key).read_bytes()
-        except FileNotFoundError as exc:
-            raise StorageError(f"no such object: {key}") from exc
-
-    def exists(self, key: str) -> bool:
-        return self._path(key).is_file()
 
     def delete(self, key: str) -> None:
         self._path(key).unlink(missing_ok=True)
@@ -66,9 +60,10 @@ class S3Storage:
         if not settings.bucket:
             raise StorageError("S3_BUCKET is not configured")
         self.bucket = settings.bucket
-        self.prefix = f"{settings.key_prefix}/" if settings.key_prefix else ""
+        self.settings = settings
         if client is None:
             import boto3  # imported lazily: only needed when S3 storage is selected
+            from botocore.config import Config
 
             client = boto3.client(
                 "s3",
@@ -76,51 +71,34 @@ class S3Storage:
                 region_name=settings.region,
                 aws_access_key_id=settings.access_key_id,
                 aws_secret_access_key=settings.secret_access_key,
+                # One connection per parallel upload (the default pool holds 10), and
+                # botocore's standard retries for throttling / transient errors.
+                config=Config(max_pool_connections=32, retries={"max_attempts": 5, "mode": "standard"}),
             )
         self._client = client
-
-    def _key(self, key: str) -> str:
-        return f"{self.prefix}{key}"
 
     def put(self, key: str, data: bytes, content_type: str, *, cache_control: str | None = None) -> None:
         try:
             self._client.put_object(  # type: ignore[attr-defined]
                 Bucket=self.bucket,
-                Key=self._key(key),
+                Key=self.settings.object_key(key),
                 Body=data,
                 ContentType=content_type,
-                # Keys embed the content hash, so objects never change once written.
                 # Render and snapshot keys embed a content hash, so those objects never change.
                 CacheControl=cache_control or "public, max-age=31536000, immutable",
             )
         except Exception as exc:  # boto3 raises many unrelated types; re-raise as one, with context
             raise StorageError(f"upload of {key} failed: {exc}") from exc
 
-    def get(self, key: str) -> bytes:
-        try:
-            return self._client.get_object(Bucket=self.bucket, Key=self._key(key))["Body"].read()  # type: ignore[attr-defined]
-        except Exception as exc:
-            raise StorageError(f"download of {key} failed: {exc}") from exc
-
-    def exists(self, key: str) -> bool:
-        from botocore.exceptions import ClientError
-
-        try:
-            self._client.head_object(Bucket=self.bucket, Key=self._key(key))  # type: ignore[attr-defined]
-        except ClientError as exc:
-            if exc.response.get("Error", {}).get("Code") in {"404", "NoSuchKey", "NotFound"}:
-                return False
-            raise StorageError(f"head of {key} failed: {exc}") from exc
-        return True
-
     def delete(self, key: str) -> None:
         try:
-            self._client.delete_object(Bucket=self.bucket, Key=self._key(key))  # type: ignore[attr-defined]
-        except Exception as exc:
+            self._client.delete_object(Bucket=self.bucket, Key=self.settings.object_key(key))  # type: ignore[attr-defined]
+        except Exception as exc:  # see put()
             raise StorageError(f"delete of {key} failed: {exc}") from exc
 
 
 def build_storage(settings: Settings) -> Storage:
+    """The configured publishing target: S3 / R2, or ``DATA_DIR/object_store``."""
     if settings.storage.backend == "s3":
         return S3Storage(settings.storage)
     # Only database snapshots (publish-db) land here; renders are served from RENDERS_DIR.

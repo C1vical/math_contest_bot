@@ -17,7 +17,7 @@ from mathbot.snapshot import (
     inspect_database,
     publish_snapshot,
 )
-from tests.test_render import add_problem
+from tests.conftest import add_problem
 
 
 @pytest.fixture
@@ -113,3 +113,77 @@ def test_bot_startup_falls_back_to_the_local_database(tmp_path):
     settings.database_path.write_bytes(b"local copy")
     install_snapshot(settings)  # logs a warning and keeps the local copy
     assert settings.database_path.read_bytes() == b"local copy"
+
+
+def test_a_file_that_is_not_a_database_is_a_snapshot_error_and_leaves_no_partial_copy(tmp_path):
+    junk = tmp_path / "problems.db"
+    junk.write_bytes(b"x" * 4096)
+    with pytest.raises(SnapshotError, match="cannot copy"):
+        create_snapshot(junk, tmp_path / "snapshots")
+    assert list((tmp_path / "snapshots").iterdir()) == []
+
+
+def test_publish_db_reports_a_storage_failure_instead_of_crashing(tmp_path, monkeypatch, capsys):
+    import argparse
+
+    from mathbot.cli import database as cli_database
+    from mathbot.render import storage as storage_module
+
+    class Unreachable(LocalStorage):
+        def put(self, key, data, content_type, *, cache_control=None):
+            raise storage_module.StorageError("bucket unreachable")
+
+    settings = load_settings({"DATA_DIR": str(tmp_path)})
+    monkeypatch.setattr(storage_module, "build_storage", lambda _settings: Unreachable(tmp_path / "bucket"))
+    assert cli_database.cmd_publish_db(argparse.Namespace(dry_run=False), settings) == 1
+    assert "bucket unreachable" in capsys.readouterr().err
+
+
+class StreamingResponse:
+    """A streamed ``requests`` response that fails the test if the body is read in one piece."""
+
+    def __init__(self, body: bytes, status: int = 200):
+        self.body, self.status_code = body, status
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+    def iter_content(self, size):
+        for start in range(0, len(self.body), size):
+            yield self.body[start : start + size]
+
+    @property
+    def content(self):
+        raise AssertionError("the snapshot must be streamed to disk, not read into memory")
+
+
+def test_http_snapshot_is_streamed_to_disk_and_verified(published, tmp_path, monkeypatch):
+    import mathbot.snapshot as snapshot_module
+
+    _, manifest, pointer = published
+    files = {
+        "https://img.example.org/db/latest.json": pointer.read_bytes(),
+        f"https://img.example.org/{manifest['key']}": (tmp_path / "bucket" / manifest["key"]).read_bytes(),
+    }
+    monkeypatch.setattr(snapshot_module, "CHUNK_BYTES", 1024)
+    monkeypatch.setattr(snapshot_module.requests, "get", lambda url, **_: StreamingResponse(files[url]))
+    target = tmp_path / "bothost" / "problems.db"
+    assert fetch_snapshot("https://img.example.org/db/latest.json", target)["key"] == manifest["key"]
+    assert inspect_database(target)[1] == 1
+
+
+def test_oversized_snapshot_is_refused_and_leaves_nothing_behind(published, tmp_path, monkeypatch):
+    import mathbot.snapshot as snapshot_module
+
+    _, manifest, pointer = published
+    body = (tmp_path / "bucket" / manifest["key"]).read_bytes()
+    files = {"https://x.org/db/latest.json": pointer.read_bytes(), f"https://x.org/{manifest['key']}": body}
+    monkeypatch.setattr(snapshot_module, "MAX_SNAPSHOT_BYTES", len(body) - 1)
+    monkeypatch.setattr(snapshot_module.requests, "get", lambda url, **_: StreamingResponse(files[url]))
+    target = tmp_path / "bothost" / "problems.db"
+    with pytest.raises(SnapshotError, match="larger than"):
+        fetch_snapshot("https://x.org/db/latest.json", target)
+    assert list((tmp_path / "bothost").iterdir()) == []

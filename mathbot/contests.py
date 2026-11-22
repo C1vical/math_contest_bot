@@ -56,7 +56,7 @@ class ContestSeries:
     eras: tuple[Era, ...] = ()
     aliases: tuple[str, ...] = ()
     enabled: bool = True
-    legacy_name: str | None = None  # contest name used in pre-2.0 image keys
+    legacy_name: str | None = None  # name in the pre-2.0 database and the CEMC seed manifest
     source: Mapping[str, object] = field(default_factory=lambda: MappingProxyType({}))
     notes: str = ""
 
@@ -104,11 +104,6 @@ def compress_years(years: Iterable[int]) -> str:
     return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in ranges) or "none"
 
 
-def legacy_image_key(series: ContestSeries, year: int, number: int) -> str:
-    """Object key used by the pre-2.0 bot: ``<year>_<contest>_<n>.png``."""
-    return f"{year}_{series.legacy_name or series.key}_{number}.png"
-
-
 def _src(**kwargs: object) -> Mapping[str, object]:
     return MappingProxyType(kwargs)
 
@@ -128,7 +123,7 @@ def _wiki(key: str, name: str, family: str, title: str, hub: str, eras: Iterable
 
 def _cemc(key: str, name: str, family: str, category: int, problems: int, **kw) -> ContestSeries:
     kw.setdefault("source_name", name)  # the title in CEMC's past-contests listing
-    kw.setdefault("legacy_name", key.capitalize())  # "Euclid", "Gauss7": the pre-2.0 contest names
+    kw.setdefault("legacy_name", key.capitalize())  # "Euclid", "Gauss7": names in the pre-2.0 database
     return ContestSeries(
         key=key,
         name=name,

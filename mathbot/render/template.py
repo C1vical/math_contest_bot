@@ -14,7 +14,9 @@ from html import escape
 from mathbot.config import RenderSettings
 from mathbot.render.vendor import asset_url
 
-TEMPLATE_VERSION = "6"  # 6: AoPS statements show AoPS's own formula and diagram PNGs
+# 6: AoPS statements show AoPS's own formula and diagram PNGs
+# 7: AoPS formulas scaled to the text size, no trailing blank space, over-wide blocks shrunk to fit
+TEMPLATE_VERSION = "7"
 
 # Fonts and MathJax come from the pinned, locally served files in render/vendor.py.
 # MathJax uses SVG output, which needs no separate font files.
@@ -79,6 +81,13 @@ ol.mc > li::before { content: "(" counter(mc, upper-alpha) ") "; counter-increme
 div.tabbing { margin: 0.4em 0 0.8em 1em; }
 img { max-width: 100%; height: auto; }
 img.latex { vertical-align: middle; }
+/* AoPS formula PNGs are sized for 16px text; this page uses 20px. The files are drawn at
+   about 2.5x their HTML size, so 1.25x stays sharp at RENDER_SCALE 2. Diagrams keep their size. */
+img.latex:not([alt^="[asy]"]), img.latexcenter[alt^="$"], img.latexcenter[alt^="\\\\["] {
+  zoom: 1.25;
+}
+/* No blank band under the last line. */
+body > :last-child, body > :last-child > :last-child, li > :last-child { margin-bottom: 0; }
 .static { max-width: 100%; min-width: 0%; }
 .center { text-align: center; }
 .latexcenter, .mw-file-element, .asy-image { display: block; max-width: 100%; height: auto; margin: 14px auto; }
@@ -117,8 +126,22 @@ async (needsMathJax) => {
       img.addEventListener('error', () => reject(new Error('image failed to load: ' + label)), { once: true });
     });
   }));
-  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-  return true;
+  const settle = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  await settle();
+  // Anything wider than the page (a long display equation, a wide table) would be cut off
+  // by the screenshot of <body>: shrink that block until it fits instead.
+  const room = document.body.clientWidth - parseFloat(getComputedStyle(document.body).paddingLeft)
+    - parseFloat(getComputedStyle(document.body).paddingRight);
+  let scaled = 0;
+  for (const block of Array.from(document.body.children)) {
+    const needed = Math.max(block.scrollWidth, block.getBoundingClientRect().width);
+    if (needed > room + 1) {
+      block.style.zoom = String(room / needed);
+      scaled += 1;
+    }
+  }
+  if (scaled) await settle();
+  return scaled;
 }
 """
 

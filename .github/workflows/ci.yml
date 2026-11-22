@@ -24,6 +24,8 @@ jobs:
         run: ruff check .
       - name: Format check
         run: ruff format --check .
+      - name: Dead code
+        run: vulture mathbot tests --min-confidence 80
       - name: Tests (offline; fixtures only)
         run: pytest -m "not browser"
 

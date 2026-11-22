@@ -9,6 +9,9 @@ live ingest and are treated accordingly:
   ``"0"``, so none is a real answer;
 * the ``<h2>... Problem N</h2>`` title the old scrapers prepended is stripped
   (the renderer adds its own);
+* AoPS Wiki statements are cut at the first heading or solution marker: the old
+  scraper sometimes let the solutions through (``<h3>Solution 1</h3>...``,
+  ``<p>Solution</p>``, ``==Video Solution``), which would be drawn into the image;
 * statements that are empty once the title is gone are rejected - the old
   loader stored a bare title whenever a fetch failed;
 * a problem that already came from a live ingest is never overwritten;
@@ -30,12 +33,20 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from mathbot.contests import AOPS_COMMUNITY, AOPS_WIKI, CEMC, ContestRegistry, ContestSeries, normalize_alias
+from mathbot.contests import (
+    AOPS_COMMUNITY,
+    AOPS_WIKI,
+    CEMC,
+    ContestRegistry,
+    ContestSeries,
+    normalize_alias,
+    problem_id,
+)
 from mathbot.db.repo import INSERTED, UNCHANGED, UPDATED, Repository
 from mathbot.htmlnorm import InvalidContentError, normalize_fragment
 from mathbot.models import EditionRef, ParsedProblem
 from mathbot.sources.aops_community import CATEGORY_URL
-from mathbot.sources.aops_wiki import PAGE_URL, page_title
+from mathbot.sources.aops_wiki import PAGE_URL, page_title, trim_statement
 from mathbot.sources.base import load_manifest
 
 log = logging.getLogger(__name__)
@@ -79,6 +90,7 @@ class LegacyReport:
 
 
 def strip_legacy_title(html: str) -> str:
+    """Remove the ``<h2>... Problem N</h2>`` title the old scrapers put in front of a statement."""
     return _TITLE.sub("", html, count=1).strip()
 
 
@@ -126,6 +138,7 @@ def _int(value: object) -> int | None:
 
 
 def read_legacy_rows(path: Path) -> list[sqlite3.Row]:
+    """Every row of the old ``math_problems`` table, read through a read-only connection."""
     if not path.is_file():
         raise FileNotFoundError(f"no database at {path}")
     conn = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
@@ -141,18 +154,6 @@ def read_legacy_rows(path: Path) -> list[sqlite3.Row]:
         conn.close()
 
 
-def _has_live_source(repo: Repository, problem_id: str) -> bool:
-    row = repo.conn.execute(
-        """
-        SELECT 1 FROM source_records
-        WHERE problem_id = ? AND (source_identifier IS NULL OR source_identifier NOT LIKE ?)
-        LIMIT 1
-        """,
-        (problem_id, LEGACY_MARKER + "%"),
-    ).fetchone()
-    return row is not None
-
-
 def import_legacy(
     repo: Repository,
     registry: ContestRegistry,
@@ -161,8 +162,7 @@ def import_legacy(
     dry_run: bool = False,
     include_disabled: bool = False,
 ) -> LegacyReport:
-    from mathbot.contests import problem_id
-
+    """Import the rows of ``legacy_db`` that no live ingest has stored (see the module docstring)."""
     report = LegacyReport(dry_run=dry_run)
     locator = _Locator()
     editions_done: set[tuple[str, int]] = set()
@@ -187,15 +187,18 @@ def import_legacy(
             continue
 
         pid = problem_id(series.key, year, number)
-        if _has_live_source(repo, pid):
+        if repo.has_source_record_not_from(pid, LEGACY_MARKER):  # already ingested from the live source
             report.skipped_live += 1
             continue
 
         raw = str(row["question_statement"] or "")
+        statement = strip_legacy_title(raw)
+        if series.provider == AOPS_WIKI:
+            statement = trim_statement(statement)  # solution text the old scraper let through
         edition_url, edition_identifier = locator.edition(series, year)
         source_url = locator.problem(series, year, number, edition_url)
         try:
-            content = normalize_fragment(strip_legacy_title(raw), source_url)
+            content = normalize_fragment(statement, source_url)
         except InvalidContentError as exc:
             report.invalid.append((old_id, str(exc)))
             continue
@@ -215,16 +218,13 @@ def import_legacy(
         )
         if (series.key, year) not in editions_done:
             # Never downgrade an edition that a live ingest already described.
-            existing = repo.conn.execute(
-                "SELECT origin FROM contest_editions WHERE id = ?", (f"{series.key.lower()}-{year}",)
-            ).fetchone()
-            if existing is None or existing["origin"] == "legacy_import":
+            if repo.edition_origin(series.key, year) in {None, "legacy_import"}:
                 repo.upsert_edition(ref)
             editions_done.add((series.key, year))
 
         parsed = ParsedProblem(
             number=number,
-            statement_html=strip_legacy_title(raw),
+            statement_html=statement,
             source_url=source_url,
             raw_payload=raw,
             source_identifier=f"{LEGACY_MARKER}{old_id}",

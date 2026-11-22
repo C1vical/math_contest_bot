@@ -10,16 +10,24 @@ import asyncio
 
 import pytest
 
-from mathbot import cli
+from mathbot.cli import common
+from mathbot.cli import images as cli_images
 from mathbot.config import HttpSettings, RenderSettings, load_settings
 from mathbot.db import Repository, open_database
 from mathbot.http import HttpStatusError, PoliteClient, RobotsDisallowedError, SourceBlockedError, TransportError
 from mathbot.render.assets import AssetCache, AssetError
 from mathbot.render.pipeline import RenderPipeline
 from mathbot.render.template import TEMPLATE_VERSION, renderer_version
-from tests.conftest import make_png
-from tests.test_http import FakeResponse, FakeSession
-from tests.test_render import SETTINGS, AssetClient, FakeRenderer, add_problem
+from tests.conftest import (
+    DictClient,
+    FakeRenderer,
+    FakeResponse,
+    FakeSession,
+    add_problem,
+    make_png,
+    settings_repo,
+)
+from tests.test_render import SETTINGS
 
 LATEX = "https://latex.artofproblemsolving.com/a/b/c/formula.png"
 ASY = "https://latex.artofproblemsolving.com/d/e/f/diagram.png"
@@ -40,8 +48,8 @@ def test_override_and_asset_interval_settings():
 
 def test_image_downloads_are_paced_by_asset_min_interval(tmp_path):
     settings = load_settings({"DATA_DIR": str(tmp_path), "HTTP_MIN_INTERVAL": "2", "ASSET_MIN_INTERVAL": "0.25"})
-    assert cli._asset_client(settings).settings.min_interval == 0.25
-    assert cli._client(settings).settings.min_interval == 2.0  # page scraping keeps its own pace
+    assert common.asset_client(settings).settings.min_interval == 0.25
+    assert common.client(settings).settings.min_interval == 2.0  # page scraping keeps its own pace
 
 
 def test_renderer_version_changed_so_everything_is_rendered_again():
@@ -103,7 +111,7 @@ def statement():
 
 
 def pipeline(repo, tmp_path, responses, settings: RenderSettings = SETTINGS):
-    client = AssetClient(responses)
+    client = DictClient(responses)
     return RenderPipeline(repo, settings, tmp_path / "renders", AssetCache(repo, client, tmp_path / "a", 3600)), client
 
 
@@ -209,17 +217,13 @@ def test_without_an_asset_cache_formulas_are_typeset(repo, tmp_path):
 
 def test_prefetch_assets_counts_then_fetches_in_resumable_batches(tmp_path, monkeypatch, capsys):
     settings = load_settings({"DATA_DIR": str(tmp_path), "ROBOTS_OVERRIDE_HOSTS": LATEX_HOST})
-    repo = Repository(open_database(settings.database_path))
-    from mathbot.contests import ContestRegistry
-
-    repo.sync_registry(ContestRegistry())
-    add_problem(repo, html=statement(), key="AMC10A", year=2024)
-    repo.conn.close()
-    fake = AssetClient({LATEX: make_png(30, 12), ASY: make_png()})
-    monkeypatch.setattr(cli, "_asset_client", lambda s: fake)
+    with settings_repo(settings) as repo:
+        add_problem(repo, html=statement(), key="AMC10A", year=2024)
+    fake = DictClient({LATEX: make_png(30, 12), ASY: make_png()})
+    monkeypatch.setattr(common, "asset_client", lambda _settings: fake)
 
     def run(*, count=False, limit=None) -> str:
-        assert cli.cmd_prefetch_assets(argparse.Namespace(contests=[], count=count, limit=limit), settings) == 0
+        assert cli_images.cmd_prefetch_assets(argparse.Namespace(contests=[], count=count, limit=limit), settings) == 0
         return capsys.readouterr().out
 
     out = run(count=True)
@@ -228,3 +232,55 @@ def test_prefetch_assets_counts_then_fetches_in_resumable_batches(tmp_path, monk
     assert "1 left for later runs" in run(limit=1) and fake.calls == [LATEX]
     assert "0 left for later runs" in run() and fake.calls == [LATEX, ASY]
     assert "2 cached" in run(count=True)  # a rerun resumes where the last one stopped
+
+
+# --------------------------------------------------------------------------- import-assets (images saved by the user)
+
+
+WIKI = "https://artofproblemsolving.com/wiki/images/d/d4/AIME_2002I_Problem_02.png"
+
+
+def test_images_saved_in_a_browser_are_imported_and_rendered(tmp_path, monkeypatch, capsys):
+    settings = load_settings({"DATA_DIR": str(tmp_path), "ROBOTS_OVERRIDE_HOSTS": LATEX_HOST})
+    html = f'<p>Find <img class="latex" src="{LATEX}" alt="$x$">.</p><p><img src="{WIKI}" alt=""></p>'
+    blocked = SourceBlockedError("challenge", url=WIKI, status=403)
+    fake = DictClient({LATEX: make_png(30, 12), WIKI: blocked})
+    monkeypatch.setattr(common, "asset_client", lambda _settings: fake)
+    with settings_repo(settings) as repo:
+        add_problem(repo, html=html, key="AIME1", year=2002, number=2)
+        common.asset_cache(settings, repo).ensure(LATEX)
+
+    page = tmp_path / "links.html"
+    assert cli_images.cmd_import_assets(argparse.Namespace(folder=None, html=str(page)), settings) == 0
+    assert "1 image(s)" in capsys.readouterr().out  # the downloadable formula is not listed
+    assert WIKI in page.read_text(encoding="utf-8") and LATEX not in page.read_text(encoding="utf-8")
+
+    saved = tmp_path / "saved"
+    saved.mkdir()
+    (saved / "aime_2002i_problem_02.png").write_bytes(make_png(396, 162))  # name matched case-insensitively
+    (saved / "notes.txt").write_text("unrelated", encoding="utf-8")
+    assert cli_images.cmd_import_assets(argparse.Namespace(folder=str(saved), html=None), settings) == 0
+    assert "imported 1, skipped 0, still missing 0" in capsys.readouterr().out
+    assert fake.calls == [LATEX]  # importing never touches the network
+
+    repo = Repository(open_database(settings.database_path))
+    row = repo.get_asset(WIKI)
+    assert row["status"] == "ok" and row["expires_at"] is None  # kept: it can't be downloaded again
+    p = RenderPipeline(repo, SETTINGS, settings.renders_dir, AssetCache(repo, fake, settings.assets_dir, 3600))
+    problem = repo.get_problem("AIME1", 2002, 2)
+    report, failures, renderer = render(p, [problem])
+    assert failures == {} and report.rendered == 1
+    assert renderer.jobs[0].document.count("data:image/png;base64,") == 2
+    repo.conn.close()
+
+
+def test_a_saved_file_that_is_not_an_image_is_skipped(tmp_path, monkeypatch, capsys):
+    settings = load_settings({"DATA_DIR": str(tmp_path)})
+    with settings_repo(settings) as repo:
+        add_problem(repo, html=f'<p>See <img src="{WIKI}" alt=""></p>', key="AIME1", year=2002, number=2)
+    monkeypatch.setattr(common, "asset_client", lambda _settings: DictClient({}))
+    saved = tmp_path / "saved"
+    saved.mkdir()
+    (saved / "AIME_2002I_Problem_02.png").write_bytes(b"<html>Just a moment...</html>")  # a saved challenge page
+    assert cli_images.cmd_import_assets(argparse.Namespace(folder=str(saved), html=None), settings) == 1
+    assert "not an image, skipped" in capsys.readouterr().out

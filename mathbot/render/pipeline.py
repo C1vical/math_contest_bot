@@ -23,26 +23,35 @@ retried on its own.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import io
 import logging
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
 from mathbot.config import RenderSettings
 from mathbot.db.repo import ProblemRow, Repository
+from mathbot.htmlnorm import remote_images
 from mathbot.http import atomic_write_bytes
+from mathbot.render import PNG_SIGNATURE
 from mathbot.render.aops_tex import formula_images, latex_images_to_tex
-from mathbot.render.assets import AssetCache, AssetError, remote_images
+from mathbot.render.assets import AssetCache, AssetError
 from mathbot.render.storage import Storage, StorageError
 from mathbot.render.template import READY_SCRIPT, build_document, needs_mathjax, renderer_version
-from mathbot.render.vendor import ASSET_ORIGIN, RenderAssetsMissing, read_asset, require_assets
+from mathbot.render.vendor import ASSET_ORIGIN, AssetReader, RenderAssetsMissing, require_assets
 
 log = logging.getLogger(__name__)
 
-PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 MIN_WIDTH, MIN_HEIGHT, MAX_HEIGHT = 100, 40, 30_000
+VIEWPORT_HEIGHT = 800  # the screenshot is of <body>, so this only sets the initial layout
+MAX_REPORTED_ERRORS = 40  # failures listed in a report; the rest are in the renders table
+PROGRESS_EVERY_RENDERS = 25
+PROGRESS_EVERY_PREFETCHES = 250
+PROGRESS_EVERY_UPLOADS = 250
+UPLOAD_WORKERS = 16  # parallel PUTs to object storage (each is latency-bound)
 
 
 class RenderError(Exception):
@@ -65,9 +74,9 @@ class RenderReport:
 
     def format(self) -> str:
         lines = [f"Render report: {self.planned} needed, {self.rendered} rendered, {self.failed} failed"]
-        lines += [f"  {pid}: {error}" for pid, error in self.errors[:40]]
-        if len(self.errors) > 40:
-            lines.append(f"  ... {len(self.errors) - 40} more (see renders table)")
+        lines += [f"  {pid}: {error}" for pid, error in self.errors[:MAX_REPORTED_ERRORS]]
+        if len(self.errors) > MAX_REPORTED_ERRORS:
+            lines.append(f"  ... {len(self.errors) - MAX_REPORTED_ERRORS} more (see renders table)")
         return "\n".join(lines)
 
 
@@ -80,7 +89,9 @@ class UploadReport:
 
     def format(self) -> str:
         lines = [f"Upload report: {self.pending} pending, {self.uploaded} uploaded, {self.failed} failed"]
-        lines += [f"  {key}: {error}" for key, error in self.errors[:40]]
+        lines += [f"  {key}: {error}" for key, error in self.errors[:MAX_REPORTED_ERRORS]]
+        if len(self.errors) > MAX_REPORTED_ERRORS:
+            lines.append(f"  ... {len(self.errors) - MAX_REPORTED_ERRORS} more")
         return "\n".join(lines)
 
 
@@ -108,6 +119,19 @@ def validate_png(data: bytes) -> tuple[int, int]:
     return width, height
 
 
+def _prefetch_images(assets: AssetCache, html: str) -> str | None:
+    """Download the remote images of one statement. Returns why it can't be rendered yet, or None."""
+    optional = formula_images(html)
+    for url in remote_images(html):
+        try:
+            assets.ensure(url)
+        except AssetError as exc:
+            if url in optional and not exc.retryable:
+                continue  # typeset from its alt TeX instead
+            return str(exc)
+    return None
+
+
 class PageRenderer(Protocol):
     """Turns one HTML document into PNG bytes. The Playwright implementation is below."""
 
@@ -120,6 +144,7 @@ class PlaywrightRenderer:
     def __init__(self, settings: RenderSettings, assets_dir: Path) -> None:
         self.settings = settings
         self.assets_dir = assets_dir
+        self._files = AssetReader(assets_dir)
         self._playwright = None
         self._browser = None
         self._context = None
@@ -134,36 +159,44 @@ class PlaywrightRenderer:
             raise RenderError(str(exc)) from exc
         self._playwright = await async_playwright().start()
         try:
-            self._browser = await self._playwright.chromium.launch(headless=True)
-        except Exception as exc:
-            await self._playwright.stop()
-            raise RenderError(
-                f"could not start Chromium ({exc}). Install it with: python -m playwright install chromium"
-            ) from exc
-        self._context = await self._browser.new_context(
-            device_scale_factor=self.settings.device_scale_factor,
-            viewport={"width": self.settings.viewport_width, "height": 800},
-            java_script_enabled=True,
-        )
-        self._context.set_default_timeout(self.settings.timeout_ms)
-        # Pinned MathJax / fonts come from disk; every other request is refused, so a render
-        # can never depend on (or leak to) the network. Statement images are data: URIs.
-        await self._context.route("**/*", self._route)
-        self._pages = asyncio.Queue()
-        for _ in range(self.settings.concurrency):
-            self._pages.put_nowait(await self._context.new_page())
+            try:
+                self._browser = await self._playwright.chromium.launch(headless=True)
+            except Exception as exc:  # Playwright raises its own Error types; any of them means "no browser"
+                raise RenderError(
+                    f"could not start Chromium ({exc}). Install it with: python -m playwright install chromium"
+                ) from exc
+            self._context = await self._browser.new_context(
+                device_scale_factor=self.settings.device_scale_factor,
+                viewport={"width": self.settings.viewport_width, "height": VIEWPORT_HEIGHT},
+                java_script_enabled=True,
+            )
+            self._context.set_default_timeout(self.settings.timeout_ms)
+            # Pinned MathJax / fonts come from disk; every other request is refused, so a render
+            # can never depend on (or leak to) the network. Statement images are data: URIs.
+            await self._context.route("**/*", self._route)
+            self._pages = asyncio.Queue()
+            for _ in range(self.settings.concurrency):
+                self._pages.put_nowait(await self._context.new_page())
+        except BaseException:
+            # __aexit__ is not called when __aenter__ fails, so close what was started here.
+            await self.__aexit__()
+            raise
         return self
 
     async def __aexit__(self, *_: object) -> None:
-        if self._browser is not None:
-            await self._browser.close()
-        if self._playwright is not None:
-            await self._playwright.stop()
+        browser, playwright = self._browser, self._playwright
+        self._browser = self._playwright = self._context = self._pages = None
+        try:
+            if browser is not None:
+                await browser.close()
+        finally:
+            if playwright is not None:
+                await playwright.stop()
 
     async def _route(self, route) -> None:
         url = route.request.url
         if url.startswith(ASSET_ORIGIN + "/"):
-            found = read_asset(self.assets_dir, url[len(ASSET_ORIGIN) + 1 :].split("?", 1)[0])
+            found = self._files.read(url[len(ASSET_ORIGIN) + 1 :].split("?", 1)[0])
             if found is not None:
                 body, content_type = found
                 await route.fulfill(status=200, body=body, content_type=content_type)
@@ -172,19 +205,45 @@ class PlaywrightRenderer:
         await route.abort("blockedbyclient")
 
     async def render(self, job: RenderJob) -> bytes:
-        assert self._pages is not None, "renderer used outside 'async with'"
-        page = await self._pages.get()
+        if self._pages is None or self._context is None:
+            raise RuntimeError("PlaywrightRenderer used outside 'async with'")
+        pages = self._pages
+        page = await pages.get()
         try:
             await page.set_content(job.document, wait_until="load")
-            await page.evaluate(READY_SCRIPT, job.uses_mathjax)
+            # page.evaluate has no timeout of its own: without this, a page whose MathJax or
+            # images never settle would hang the whole run.
+            scaled = await asyncio.wait_for(
+                page.evaluate(READY_SCRIPT, job.uses_mathjax), self.settings.timeout_ms / 1000
+            )
+            if scaled:
+                log.info("shrank over-wide content to fit", extra={"problem": job.problem.id, "blocks": scaled})
             return await page.locator("body").screenshot(type="png", animations="disabled")
-        except Exception as exc:
+        except asyncio.TimeoutError as exc:
+            page = await self._replace_page(page)  # its script may still be running
+            raise RenderError(f"page was not ready after {self.settings.timeout_ms} ms") from exc
+        except Exception as exc:  # Playwright's errors, reported per problem
+            # The page may have crashed or been closed; returning it to the pool would fail
+            # every later render on it, so a fresh page takes its place.
+            page = await self._replace_page(page)
             raise RenderError(f"{type(exc).__name__}: {str(exc).splitlines()[0] if str(exc) else ''}") from exc
         finally:
-            self._pages.put_nowait(page)
+            pages.put_nowait(page)
+
+    async def _replace_page(self, page):
+        """Close a page left in an unknown state and open a fresh one in its place."""
+        with contextlib.suppress(Exception):  # it may already be closed or crashed
+            await page.close()
+        try:
+            return await self._context.new_page()
+        except Exception as exc:  # keep the closed page: renders on it fail and are recorded per problem
+            log.warning("could not open a replacement browser page", extra={"error": str(exc)})
+            return page
 
 
 class RenderPipeline:
+    """Plans, renders, uploads and cleans up problem images for one renderer version."""
+
     def __init__(
         self,
         repo: Repository,
@@ -198,7 +257,7 @@ class RenderPipeline:
         self.renders_dir = renders_dir
         self.assets = assets
         self.version = renderer_version(settings)
-        self.progress = progress or (lambda message: None)
+        self.progress = progress or (lambda _message: None)
 
     # -- planning
 
@@ -257,24 +316,12 @@ class RenderPipeline:
         if self.assets is None:
             return failures
         for index, problem in enumerate(problems, start=1):
-            error = self._prefetch_one(problem.statement_html)
+            error = _prefetch_images(self.assets, problem.statement_html)
             if error is not None:
                 failures[problem.id] = error
-            if index % 250 == 0:
+            if index % PROGRESS_EVERY_PREFETCHES == 0:
                 self.progress(f"images checked for {index}/{len(problems)} problems")
         return failures
-
-    def _prefetch_one(self, html: str) -> str | None:
-        assert self.assets is not None
-        optional = formula_images(html)
-        for url in remote_images(html):
-            try:
-                self.assets.ensure(url)
-            except AssetError as exc:
-                if url in optional and not exc.retryable:
-                    continue  # typeset from its alt TeX instead
-                return str(exc)
-        return None
 
     async def render(
         self,
@@ -311,6 +358,10 @@ class RenderPipeline:
         except AssetError as exc:
             self._fail(problem, f"asset: {exc}", 1, report)
             return
+        except Exception as exc:  # unexpected markup: fail this problem, keep the run going
+            log.exception("could not build the render page", extra={"problem": problem.id})
+            self._fail(problem, f"could not build the page: {type(exc).__name__}: {exc}", 1, report)
+            return
 
         attempts = self.settings.retries + 1
         error = "unknown error"
@@ -323,7 +374,11 @@ class RenderPipeline:
                 log.warning("render attempt failed", extra={"problem": problem.id, "attempt": attempt, "error": error})
                 continue
             key = render_key(problem, self.version)
-            atomic_write_bytes(self.renders_dir / key, data)
+            try:
+                atomic_write_bytes(self.renders_dir / key, data)
+            except OSError as exc:  # e.g. the file stayed locked: fail this problem, keep the run going
+                self._fail(problem, f"could not save the image: {exc}", attempt, report)
+                return
             self.repo.record_render(
                 problem_id=problem.id,
                 content_hash=problem.content_hash,
@@ -337,7 +392,7 @@ class RenderPipeline:
                 attempts=attempt,
             )
             report.rendered += 1
-            if report.rendered % 25 == 0:
+            if report.rendered % PROGRESS_EVERY_RENDERS == 0:
                 self.progress(f"rendered {report.rendered}/{report.planned}")
             return
         self._fail(problem, error, attempts, report)
@@ -351,31 +406,51 @@ class RenderPipeline:
         serves, so nothing is copied and each render whose file exists is just marked
         as published.
         """
-        rows = self.repo.current_renders(self.version, pending_only=not force)
-        rows = [r for r in rows if r["status"] == "ok" and r["object_key"]]
+        rows = [r for r in self.repo.current_renders(self.version, pending_only=not force) if r["object_key"]]
         report = UploadReport(pending=len(rows))
-        for row in rows:
-            key = row["object_key"]
+
+        def publish(row) -> None:
             path = self.renders_dir / row["local_path"]
-            try:
-                if storage is None:
-                    if not path.is_file():
-                        raise OSError(f"render file is missing: {path}")
+            if storage is None:
+                if not path.is_file():
+                    raise OSError(f"render file is missing: {path}")
+                return
+            data = path.read_bytes()
+            validate_png(data)
+            storage.put(row["object_key"], data, "image/png")
+
+        # Each PUT waits on a network round trip, so several run at once. Only this thread
+        # touches the database, and every success is recorded at once, so an interrupted
+        # upload resumes where it stopped.
+        pool = ThreadPoolExecutor(max_workers=1 if storage is None else UPLOAD_WORKERS, thread_name_prefix="upload")
+        try:
+            futures = {pool.submit(publish, row): row for row in rows}
+            for done, future in enumerate(as_completed(futures), start=1):
+                row = futures[future]
+                try:
+                    future.result()
+                except (OSError, RenderError, StorageError) as exc:
+                    report.failed += 1
+                    report.errors.append((row["object_key"], str(exc)))
+                    log.error("upload failed", extra={"key": row["object_key"], "error": str(exc)})
                 else:
-                    data = path.read_bytes()
-                    validate_png(data)
-                    storage.put(key, data, "image/png")
-            except (OSError, RenderError, StorageError) as exc:
-                report.failed += 1
-                report.errors.append((key, str(exc)))
-                log.error("upload failed", extra={"key": key, "error": str(exc)})
-                continue
-            self.repo.mark_uploaded(row["id"])
-            report.uploaded += 1
+                    self.repo.mark_uploaded(row["id"])
+                    report.uploaded += 1
+                if done % PROGRESS_EVERY_UPLOADS == 0:
+                    self.progress(f"uploaded {report.uploaded}/{report.pending} ({report.failed} failed)")
+        except BaseException:
+            pool.shutdown(wait=False, cancel_futures=True)  # Ctrl+C: don't wait for the queue
+            raise
+        pool.shutdown(wait=True)
         return report
 
     def cleanup(self, storage: Storage | None = None, *, dry_run: bool = False) -> dict[str, int]:
-        """Remove renders of superseded content / old renderer versions, and orphan files."""
+        """Remove renders that are no longer needed, and orphan files.
+
+        That is renders of superseded content, failed attempts, and renders by another
+        renderer version once this version has rendered the same content. An older
+        version's picture that has no replacement yet is kept: the bot still serves it.
+        """
         counts = {"stale_records": 0, "local_files": 0, "remote_objects": 0, "orphan_files": 0}
         for row in self.repo.stale_renders(self.version):
             counts["stale_records"] += 1

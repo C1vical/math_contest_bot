@@ -4,29 +4,17 @@ import hashlib
 
 import pytest
 
-from mathbot.http import HttpStatusError, Response
+from mathbot.http import HttpStatusError
 from mathbot.render import vendor
 from mathbot.render.vendor import (
     VENDORED,
+    AssetReader,
     RenderAssetsMissing,
     install_assets,
     missing_assets,
-    read_asset,
     require_assets,
 )
-
-
-class FakeClient:
-    def __init__(self, bodies: dict[str, bytes | Exception]):
-        self.bodies = bodies
-        self.calls: list[str] = []
-
-    def get(self, url, **kwargs):
-        self.calls.append(url)
-        body = self.bodies[url]
-        if isinstance(body, Exception):
-            raise body
-        return Response(url, 200, {}, body)
+from tests.conftest import DictClient as FakeClient
 
 
 @pytest.fixture
@@ -62,7 +50,7 @@ def test_install_verifies_and_is_idempotent(tmp_path, pinned):
 
 
 def test_install_refuses_a_file_with_the_wrong_hash(tmp_path, pinned):
-    tampered = {url: b"tampered" for url in pinned}
+    tampered = dict.fromkeys(pinned, b"tampered")
     with pytest.raises(RenderAssetsMissing, match="refusing to install"):
         install_assets(tmp_path, FakeClient(tampered))
     assert not any(tmp_path.rglob("*.js"))
@@ -74,13 +62,13 @@ def test_install_reports_download_failures(tmp_path, pinned):
         install_assets(tmp_path, FakeClient({url: HttpStatusError("HTTP 503", url=url, status=503)}))
 
 
-def test_read_asset_serves_only_verified_pinned_files(tmp_path, pinned):
+def test_asset_reader_serves_only_verified_pinned_files(tmp_path, pinned):
     install_assets(tmp_path, FakeClient(dict(pinned)))
-    data, content_type = read_asset(tmp_path, "mathjax/tex-svg-full.js")
+    data, content_type = AssetReader(tmp_path).read("mathjax/tex-svg-full.js")
     assert data.startswith(b"window.MathJax") and content_type == "x/y"
-    assert read_asset(tmp_path, "../secrets.txt") is None
-    assert read_asset(tmp_path, "fonts/unknown.woff") is None
+    assert AssetReader(tmp_path).read("../secrets.txt") is None
+    assert AssetReader(tmp_path).read("fonts/unknown.woff") is None
     (tmp_path / "fonts" / "cmunrm.woff").write_bytes(b"corrupted")
-    assert read_asset(tmp_path, "fonts/cmunrm.woff") is None
+    assert AssetReader(tmp_path).read("fonts/cmunrm.woff") is None
     with pytest.raises(RenderAssetsMissing, match="fonts/cmunrm.woff"):
         require_assets(tmp_path)

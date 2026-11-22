@@ -17,10 +17,6 @@ def iso_utc(when: datetime | None = None) -> str:
     return (when or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def utcnow() -> str:
-    return iso_utc()
-
-
 def connect(path: Path | str) -> sqlite3.Connection:
     """Open a connection, creating the parent directory first."""
     if str(path) != ":memory:":
@@ -40,29 +36,47 @@ def current_version(conn: sqlite3.Connection) -> int:
     return row[0] or 0
 
 
+class SchemaTooNewError(RuntimeError):
+    """The database was migrated by newer code than this."""
+
+
 def migrate(conn: sqlite3.Connection) -> int:
-    """Apply pending migrations, each in its own transaction. Returns the schema version."""
+    """Apply pending migrations, each in its own transaction. Returns the schema version.
+
+    Each migration takes the write lock first (``BEGIN IMMEDIATE``) and re-reads the
+    version inside it, so two processes starting at once (bot and CLI) never apply the
+    same migration twice.
+    """
     version = current_version(conn)
-    if version > LATEST_VERSION:
-        raise RuntimeError(
-            f"database schema version {version} is newer than this code understands ({LATEST_VERSION}); "
-            "upgrade the bot or restore a matching database"
-        )
+    _check_not_newer(version)
     for target, sql in MIGRATIONS:
         if target <= version:
             continue
-        log.info("applying migration", extra={"version": target})
         try:
-            conn.execute("BEGIN")
+            conn.execute("BEGIN IMMEDIATE")
+            version = current_version(conn)
+            if target <= version:  # another process applied it while we waited for the lock
+                conn.execute("COMMIT")
+                continue
+            log.info("applying migration", extra={"version": target})
             for statement in _split(sql):
                 conn.execute(statement)
-            conn.execute("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)", (target, utcnow()))
+            conn.execute("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)", (target, iso_utc()))
             conn.execute("COMMIT")
         except sqlite3.Error:
-            conn.execute("ROLLBACK")
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
             raise
         version = target
     return version
+
+
+def _check_not_newer(version: int) -> None:
+    if version > LATEST_VERSION:
+        raise SchemaTooNewError(
+            f"database schema version {version} is newer than this code understands ({LATEST_VERSION}); "
+            "upgrade the bot or restore a matching database"
+        )
 
 
 def _split(sql: str) -> list[str]:

@@ -116,7 +116,10 @@ def test_solutions_are_dropped_when_the_page_does_not_match_the_questions(regist
     edition = adapter.discover(series)[0]
     result = adapter.fetch_edition(series, edition)
     assert len(result.problems) == 10 and all(p.solution_html is None for p in result.problems)
-    assert [f.error for f in result.failures] == ["solutions page has 1 entries for 10 questions; solutions not stored"]
+    assert [f.error for f in result.failures] == [
+        "solutions page has 1 entries for 10 questions; solutions and answers not stored"
+    ]
+    assert all(f.warning for f in result.failures)  # statements are still complete
 
 
 def test_page_without_questions_is_an_error_not_an_empty_result():
@@ -207,7 +210,7 @@ def test_fetch_edition_parses_validates_and_attaches_answers(adapter, registry):
     first = result.problems[0]
     assert (first.number, first.section, first.answer) == (1, "A", "D")
     assert first.answer_source == f"{DOCS}/2019/2019PascalSolution.html"
-    assert first.source_url == edition.source_url and first.source_revision == result.source_hash
+    assert first.source_url == edition.source_url and result.source_hash.startswith(first.source_revision)
 
 
 def test_fetch_edition_applies_known_layout_fix(adapter, registry):
@@ -236,7 +239,9 @@ def test_wrong_declared_count_on_page_is_tolerated_when_registry_agrees(registry
     adapter = CemcAdapter(FixtureClient(cemc_route))
     edition = next(e for e in adapter.discover(series) if e.year == 2016)
     result = adapter.fetch_edition(series, edition)
-    assert [p.number for p in result.problems] == [1, 2, 3, 4] and not result.failures
+    assert [p.number for p in result.problems] == [1, 2, 3, 4]
+    # The fixtures have no solutions page for it: a warning, never a failed edition.
+    assert all(f.warning and "solutions unavailable" in f.error for f in result.failures)
 
 
 def test_count_mismatch_rejects_the_whole_edition(registry):
@@ -306,3 +311,75 @@ def test_discover_cimc_and_csmc_from_the_shared_listing(registry):
     assert cimc[2025].extra["solution_url"] == f"{DOCS}/2026/2025CIMCSolution.html"
     assert cimc[2025].label == "2025 Canadian Intermediate Mathematics Contest"  # no "Contest Contest"
     assert csmc[2023].expected_problems == 9
+
+
+def test_answer_key_in_the_2024_smallcaps_format():
+    """Since 2024 the label is ``<span class="smallcaps">Answer</span>: (B)``, whose text is
+    "Answer : (B)". Pascal/Cayley/Fermat 2024-2026 had solutions but no answers."""
+    answers = parse_answers(read_fixture("cemc", "2024PascalSolution_trimmed.html"))
+    assert answers == {1: "B", 2: "D", 3: "C"}
+
+
+def test_answers_are_dropped_with_the_solutions_when_the_page_does_not_match(registry):
+    series = registry.get("PASCAL")
+
+    def route(url, params):
+        if url.endswith("2019PascalSolution.html"):  # three items for 25 questions
+            return read_fixture("cemc", "2024PascalSolution_trimmed.html")
+        return cemc_route(url, params)
+
+    adapter = CemcAdapter(FixtureClient(route))
+    edition = {e.year: e for e in adapter.discover(series)}[2019]
+    result = adapter.fetch_edition(series, edition)
+    assert len(result.problems) == 25
+    assert all(p.answer is None and p.solution_html is None for p in result.problems)
+
+
+def test_a_parser_change_reparses_an_unchanged_page(adapter, registry):
+    """The edition fingerprint includes PARSER_VERSION, so a stored hash from an older
+    parser does not make an incremental run skip the page."""
+    from mathbot.sources import cemc
+
+    series = registry.get("EUCLID")
+    edition = adapter.discover(series)[0]
+    current = adapter.fetch_edition(series, edition).source_hash
+    page_hash = current.split("+", 1)[0]
+    older = KnownEdition(source_hash=f"{page_hash}+parser{cemc.PARSER_VERSION - 1}")
+    assert not adapter.fetch_edition(series, edition, known=older).unchanged
+    assert not adapter.fetch_edition(series, edition, known=KnownEdition(source_hash=page_hash)).unchanged
+
+
+def test_numeric_part_c_answers_written_as_tex():
+    page = (
+        "<html><body><ol>"
+        r'<li><p>Work.</p><p><span class="smallcaps">Answer</span>: <span class="math inline">\(11\)</span></p></li>'
+        r'<li><p>Work.</p><p><span class="smallcaps">Answer</span>: <span class="math inline">\(-86\)</span>.</p></li>'
+        "<li><p>Work.</p><p>Answer: 2023</p></li>"
+        "</ol></body></html>"
+    )
+    assert parse_answers(page) == {1: "11", 2: "-86", 3: "2023"}
+
+
+def test_editions_from_the_seed_manifest_still_get_their_solutions_and_answers(registry):
+    """Pascal 2020 is missing from the live listing, so it comes from the seed manifest,
+    which holds only the contest URL. Its solutions page sits next to it
+    (.../2020PascalContest.html -> .../2020PascalSolution.html) and must still be read."""
+    series = registry.get("PASCAL")
+    contest = f"{DOCS}/2026/2019PascalContest.html"  # the manifest's URL for 2019
+    solution = f"{DOCS}/2026/2019PascalSolution.html"
+
+    def route(url, params):
+        if url == LISTING_URL:
+            return "<html><body><table><tbody></tbody></table></body></html>"  # listing omits it
+        if url == contest:
+            return read_fixture("cemc", "2019PascalContest.html")
+        if url == solution:
+            return read_fixture("cemc", "2019PascalSolution.html")
+        return None
+
+    adapter = CemcAdapter(FixtureClient(route))
+    edition = {e.year: e for e in adapter.discover(series)}[2019]
+    assert edition.origin == "fallback" and edition.extra["solution_url"] == solution
+    result = adapter.fetch_edition(series, edition)
+    assert result.failures == [] and len(result.problems) == 25
+    assert result.problems[0].answer == "D" and result.problems[0].solution_html

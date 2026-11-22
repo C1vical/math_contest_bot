@@ -41,6 +41,8 @@ SNAPSHOT_PREFIX = "db"
 POINTER_KEY = f"{SNAPSHOT_PREFIX}/latest.json"
 DOWNLOAD_TIMEOUT = 120
 MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024 * 1024
+MAX_POINTER_BYTES = 64 * 1024
+CHUNK_BYTES = 1 << 20
 _SIDECARS = ("-wal", "-shm")
 
 
@@ -105,14 +107,23 @@ def create_snapshot(database: Path, out_dir: Path) -> Snapshot:
     created = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     target = out_dir / f"problems-{created}.db"
     tmp = target.with_suffix(".db.tmp")
-    source = sqlite3.connect(f"file:{database.as_posix()}?mode=ro", uri=True)
-    dest = sqlite3.connect(tmp)
     try:
-        source.backup(dest)
-        dest.execute("PRAGMA journal_mode = DELETE")  # a self-contained file with no -wal sidecar
-    finally:
-        dest.close()
-        source.close()
+        source = sqlite3.connect(f"file:{database.as_posix()}?mode=ro", uri=True)
+        try:
+            dest = sqlite3.connect(tmp)
+            try:
+                source.backup(dest)
+                dest.execute("PRAGMA journal_mode = DELETE")  # a self-contained file with no -wal sidecar
+            finally:
+                dest.close()
+        finally:
+            source.close()
+    except sqlite3.Error as exc:
+        tmp.unlink(missing_ok=True)
+        raise SnapshotError(f"cannot copy {database}: {exc}") from exc
+    except BaseException:  # Ctrl+C: leave no partial copy behind
+        tmp.unlink(missing_ok=True)
+        raise
     os.replace(tmp, target)
     version, problems = inspect_database(target)
     return Snapshot(target, _sha256_file(target), target.stat().st_size, version, problems, created)
@@ -135,8 +146,18 @@ def publish_snapshot(snapshot: Snapshot, storage: Storage) -> dict:
 # --------------------------------------------------------------------------- bot host side
 
 
-def _read(location: str) -> bytes:
-    if urlsplit(location).scheme in {"http", "https"}:
+def _is_url(location: str) -> bool:
+    return urlsplit(location).scheme in {"http", "https"}
+
+
+def _local_path(location: str) -> Path:
+    return Path(location.removeprefix("file://"))
+
+
+def _chunks(location: str, limit: int):
+    """Yield the bytes at ``location`` (http(s) URL or local path) in chunks, at most ``limit`` in total."""
+    total = 0
+    if _is_url(location):
         try:
             response = requests.get(location, timeout=DOWNLOAD_TIMEOUT, stream=True)
         except requests.RequestException as exc:
@@ -144,25 +165,48 @@ def _read(location: str) -> bytes:
         with response:
             if response.status_code != 200:
                 raise SnapshotError(f"download of {location} failed: HTTP {response.status_code}")
-            body = bytearray()
-            for chunk in response.iter_content(1 << 20):
-                body.extend(chunk)
-                if len(body) > MAX_SNAPSHOT_BYTES:
-                    raise SnapshotError(f"{location} is larger than {MAX_SNAPSHOT_BYTES} bytes")
-            return bytes(body)
-    path = Path(location[len("file://") :] if location.startswith("file://") else location)
+            try:
+                for chunk in response.iter_content(CHUNK_BYTES):
+                    total += len(chunk)
+                    if total > limit:
+                        raise SnapshotError(f"{location} is larger than {limit} bytes")
+                    yield chunk
+            except requests.RequestException as exc:
+                raise SnapshotError(f"download of {location} failed: {exc}") from exc
+        return
+    path = _local_path(location)
     try:
-        return path.read_bytes()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(CHUNK_BYTES), b""):
+                total += len(chunk)
+                if total > limit:
+                    raise SnapshotError(f"{location} is larger than {limit} bytes")
+                yield chunk
     except OSError as exc:
         raise SnapshotError(f"cannot read {path}: {exc}") from exc
 
 
+def _read(location: str) -> bytes:
+    """The small ``latest.json`` pointer, in memory."""
+    return b"".join(_chunks(location, MAX_POINTER_BYTES))
+
+
+def _download(location: str, target: Path) -> str:
+    """Stream ``location`` into ``target`` without holding it in memory; returns its SHA-256."""
+    digest = hashlib.sha256()
+    with target.open("wb") as handle:
+        for chunk in _chunks(location, MAX_SNAPSHOT_BYTES):
+            digest.update(chunk)
+            handle.write(chunk)
+    return digest.hexdigest()
+
+
 def _resolve(pointer_location: str, key: str) -> str:
     """Where the snapshot named by ``key`` lives, relative to the pointer's base location."""
-    if urlsplit(pointer_location).scheme in {"http", "https"}:
-        base = pointer_location[: -len(POINTER_KEY)] if pointer_location.endswith(POINTER_KEY) else pointer_location
+    if _is_url(pointer_location):
+        base = pointer_location.removesuffix(POINTER_KEY)
         return urljoin(base if base.endswith("/") else base + "/", key)
-    pointer = Path(pointer_location[len("file://") :] if pointer_location.startswith("file://") else pointer_location)
+    pointer = _local_path(pointer_location)
     root = pointer.parent.parent if pointer.parent.name == SNAPSHOT_PREFIX else pointer.parent
     return str(root / key)
 
@@ -197,17 +241,14 @@ def fetch_snapshot(pointer_location: str, database: Path) -> dict | None:
     if database.is_file() and marker.is_file() and marker.read_text(encoding="utf-8").strip() == expected:
         return None
 
-    data = _read(_resolve(pointer_location, key))
-    actual = hashlib.sha256(data).hexdigest()
-    if actual != expected:
-        raise SnapshotError(f"snapshot {key} has SHA-256 {actual}, pointer says {expected}")
-
     database.parent.mkdir(parents=True, exist_ok=True)
     handle, tmp_name = tempfile.mkstemp(prefix=database.name + ".", suffix=".download", dir=database.parent)
     os.close(handle)
     tmp = Path(tmp_name)
     try:
-        tmp.write_bytes(data)
+        actual = _download(_resolve(pointer_location, key), tmp)
+        if actual != expected:
+            raise SnapshotError(f"snapshot {key} has SHA-256 {actual}, pointer says {expected}")
         inspect_database(tmp)
         _replace_database(tmp, database)
     finally:

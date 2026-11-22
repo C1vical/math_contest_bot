@@ -9,6 +9,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from mathbot.bot import ui
 from mathbot.bot.health import HealthServer, HealthState
 from mathbot.bot.images import ImageService
 from mathbot.bot.policy import NotAdmin, NotAllowedHere
@@ -19,6 +20,8 @@ from mathbot.db import Repository, open_database
 
 log = logging.getLogger(__name__)
 
+MAX_ECHO_CHARS = 80  # user input repeated back in an error message
+
 COGS = (
     "mathbot.bot.cogs.problems",
     "mathbot.bot.cogs.contests",
@@ -28,6 +31,8 @@ COGS = (
 
 
 class MathBot(commands.Bot):
+    """The Discord client: settings, registry, database access and image delivery for the cogs."""
+
     def __init__(self, settings: Settings, registry: ContestRegistry, health: HealthState) -> None:
         # Slash commands only: no privileged intents, and the prefix is never matched.
         super().__init__(command_prefix=commands.when_mentioned, intents=discord.Intents.default(), help_command=None)
@@ -35,7 +40,7 @@ class MathBot(commands.Bot):
         self.registry = registry
         self.health = health
         self.db = Database(settings.database_path)
-        self.images = ImageService(settings, self.db, registry)
+        self.images = ImageService(settings, self.db)
         self._announced = False
         self.tree.on_error = self.on_app_command_error  # type: ignore[method-assign]
 
@@ -52,6 +57,11 @@ class MathBot(commands.Bot):
             guild = discord.Object(id=guild_id)
             self.tree.copy_global_to(guild=guild)
             synced = await self.tree.sync(guild=guild)
+            # With GUILD_ID the commands live in that server. Anything still registered
+            # globally was left by an older version or an earlier global sync and shows up
+            # as a duplicate (/problem twice) or a dead command (/gimme), so clear it.
+            await self.http.bulk_upsert_global_commands(self.application_id, [])
+            log.info("cleared global slash commands (GUILD_ID is set)")
         else:
             synced = await self.tree.sync()
         log.info("slash commands synced", extra={"count": len(synced), "guild": guild_id or "global"})
@@ -92,11 +102,12 @@ class MathBot(commands.Bot):
         elif isinstance(error, NotAdmin):
             message = "That command is for bot administrators only."
         elif isinstance(error, app_commands.CommandOnCooldown):
-            message = f"Slow down - try again in {error.retry_after:.0f}s."
+            message = f"Slow down - try again in {ui.seconds(error.retry_after)}."
         elif isinstance(error, app_commands.CheckFailure):
             message = "You can't use that command here."
         elif isinstance(error, app_commands.TransformerError):
-            message = f"I couldn't understand `{error.value}` for that option."
+            value = discord.utils.escape_markdown(str(error.value))[:MAX_ECHO_CHARS]
+            message = f"I couldn't understand `{value}` for that option."
         else:
             reference = uuid.uuid4().hex[:8]
             original = getattr(error, "original", error)
@@ -152,8 +163,9 @@ def run_bot(settings: Settings) -> int:
 
     conn = open_database(settings.database_path)  # creates data/ and applies migrations
     try:
-        Repository(conn).sync_registry(registry)
-        problems = Repository(conn).totals()["problems"]
+        repo = Repository(conn)
+        repo.sync_registry(registry)
+        problems = repo.totals()["problems"]
     finally:
         conn.close()
     if problems == 0:

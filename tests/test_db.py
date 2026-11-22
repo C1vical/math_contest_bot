@@ -7,8 +7,8 @@ import pytest
 from mathbot.db import Repository, connect, migrate, open_database
 from mathbot.db.repo import INSERTED, UNCHANGED, UPDATED
 from mathbot.db.schema import LATEST_VERSION
-from mathbot.htmlnorm import normalize_fragment
 from mathbot.models import EditionRef, ParsedProblem
+from tests.conftest import store
 
 URL = "https://example.org/2024_AMC_10A_Problems/Problem_5"
 
@@ -19,12 +19,6 @@ def edition(key="AMC10A", year=2024) -> EditionRef:
 
 def parsed(number=5, html="<p>What is 2 + 2?</p>", **kw) -> ParsedProblem:
     return ParsedProblem(number=number, statement_html=html, source_url=URL, raw_payload=f"<raw>{html}</raw>", **kw)
-
-
-def store(repo, ref, problem, run_id=None) -> str:
-    repo.upsert_edition(ref)
-    content = normalize_fragment(problem.statement_html, problem.source_url)
-    return repo.upsert_problem(ref, problem, content, provider="aops_wiki", run_id=run_id)
 
 
 def test_open_database_creates_missing_directories_and_migrates(tmp_path):
@@ -226,3 +220,109 @@ def test_repository_works_on_a_fresh_connection_per_thread(tmp_path, registry):
     assert second.get_problem("AMC10A", 2024, 5) is not None
     first.conn.close()
     second.conn.close()
+
+
+# Columns a reverted experiment added to source_records as migration 3 (applied on 2026-11-22
+# to a real database). Code that did not know version 3 refused to open that database.
+_EXPERIMENT_V3 = (
+    "ALTER TABLE source_records ADD COLUMN parser_source TEXT NOT NULL DEFAULT 'existing'",
+    "ALTER TABLE source_records ADD COLUMN fallback_used INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE source_records ADD COLUMN fetch_status INTEGER",
+    "ALTER TABLE source_records ADD COLUMN fetch_timestamp TEXT",
+    "ALTER TABLE source_records ADD COLUMN fallback_error TEXT",
+    "ALTER TABLE source_records ADD COLUMN asset_status TEXT NOT NULL DEFAULT 'not_needed'",
+    "ALTER TABLE source_records ADD COLUMN render_status TEXT NOT NULL DEFAULT 'pending'",
+    "ALTER TABLE source_records ADD COLUMN ingestion_error TEXT",
+)
+
+
+def _columns(conn, table):
+    return [row[1] for row in conn.execute(f"PRAGMA table_info({table})")]
+
+
+def test_database_at_version_3_from_the_reverted_experiment_opens_and_matches_a_fresh_one(tmp_path):
+    from mathbot.db.schema import MIGRATIONS
+
+    old = connect(tmp_path / "old.db")
+    old.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
+    for version, sql in MIGRATIONS[:2]:
+        for statement in filter(None, (s.strip() for s in sql.split(";"))):
+            old.execute(statement)
+        old.execute("INSERT INTO schema_migrations VALUES (?, 'x')", (version,))
+    for statement in _EXPERIMENT_V3:
+        old.execute(statement)
+    old.execute("INSERT INTO schema_migrations VALUES (3, 'x')")
+    old.close()
+
+    reopened = open_database(tmp_path / "old.db")  # raised "schema version 3 is newer" before
+    fresh = open_database(tmp_path / "fresh.db")
+    assert _columns(reopened, "source_records") == _columns(fresh, "source_records")
+    reopened.close()
+    fresh.close()
+
+
+def test_concurrent_migration_does_not_apply_a_version_twice(tmp_path):
+    first, second = connect(tmp_path / "p.db"), connect(tmp_path / "p.db")
+    assert migrate(first) == LATEST_VERSION
+    assert migrate(second) == LATEST_VERSION  # sees the work of the first, applies nothing
+    assert second.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == LATEST_VERSION
+    first.close()
+    second.close()
+
+
+def _store_numbers(repo, key, year, numbers):
+    for number in numbers:
+        store(repo, edition(key, year), parsed(number=number, html=f"<p>{key} {year} problem {number} text</p>"))
+
+
+def test_random_year_range_and_excluded_problems(repo):
+    for year in (2019, 2020, 2021, 2022):
+        _store_numbers(repo, "AMC10A", year, [1])
+    years = {repo.random_problem(year_from=2020, year_to=2021).year for _ in range(30)}
+    assert years == {2020, 2021}
+    assert repo.random_problem(year_from=2023) is None
+    shown = ["amc10a-2019-p01", "amc10a-2020-p01", "amc10a-2021-p01"]
+    assert repo.random_problem(exclude_ids=shown).id == "amc10a-2022-p01"
+
+
+def test_random_difficulty_is_the_position_in_the_paper(repo):
+    _store_numbers(repo, "AMC10A", 2024, range(1, 26))  # thirds: 1-9, 10-17, 18-25
+    _store_numbers(repo, "IMO", 2020, range(1, 7))  # two days: 1/4 easy, 2/5 medium, 3/6 hard
+    easy = {repo.random_problem(series_keys=["AMC10A"], difficulty="easy").number for _ in range(60)}
+    hard = {repo.random_problem(series_keys=["AMC10A"], difficulty="hard").number for _ in range(60)}
+    assert max(easy) <= 9 and min(hard) >= 18
+    assert {repo.random_problem(series_keys=["IMO"], difficulty="easy").number for _ in range(30)} == {1, 4}
+    assert {repo.random_problem(series_keys=["IMO"], difficulty="hard").number for _ in range(30)} == {3, 6}
+    with pytest.raises(ValueError):
+        repo.random_problem(difficulty="impossible")
+
+
+def test_random_prefers_problems_that_have_an_image(repo):
+    _store_numbers(repo, "AMC10A", 2024, [1, 2, 3])
+    rendered = repo.get_problem("AMC10A", 2024, 2)
+    repo.record_render(
+        problem_id=rendered.id, content_hash=rendered.content_hash, renderer_version="v", status="ok", local_path="x"
+    )
+    assert {repo.random_problem().id for _ in range(20)} == {rendered.id}
+    assert len({repo.random_problem(prefer_rendered=False).id for _ in range(40)}) == 3
+
+
+def test_neighbouring_problems_in_the_same_sitting(repo):
+    _store_numbers(repo, "AMC10A", 2024, [1, 2, 4])
+    _store_numbers(repo, "AMC10A", 2023, [5])
+    assert repo.neighbour("amc10a-2024-p02", +1).number == 4  # gaps are skipped
+    assert repo.neighbour("amc10a-2024-p02", -1).number == 1
+    assert repo.neighbour("amc10a-2024-p04", +1) is None  # never crosses into another year
+    assert repo.neighbour("amc10a-2024-p01", -1) is None
+    assert repo.neighbour("no-such-problem", +1) is None
+
+
+def test_random_problem_uses_covering_indexes(repo):
+    plan = " ".join(
+        row[3]
+        for row in repo.conn.execute(
+            "EXPLAIN QUERY PLAN SELECT p.id FROM problems p WHERE EXISTS (SELECT 1 FROM renders r"
+            " WHERE r.problem_id = p.id AND r.content_hash = p.content_hash AND r.status = 'ok')"
+        )
+    )
+    assert "COVERING INDEX idx_problems_cover" in plan and "COVERING INDEX idx_renders_current" in plan

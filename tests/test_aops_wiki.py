@@ -217,7 +217,74 @@ def test_http_error_on_one_problem_does_not_abort_the_edition(registry):
 
 def test_expected_count_is_used_when_the_edition_page_lists_nothing(registry):
     route = wiki_route({("parse", "2099_AMC_10A_Problems"): json.dumps({"parse": {"title": "x", "links": []}})})
-    adapter = AopsWikiAdapter(FixtureClient(route), fetch_answers=False)
+    adapter = AopsWikiAdapter(FixtureClient(route))
     series, edition = edition_2099(adapter, registry)
     result = adapter.fetch_edition(series, edition)
     assert len(result.problems) + len(result.failures) == 25  # every expected number is accounted for
+
+
+# --------------------------------------------------------------------------- statement tail trimming
+# Shapes taken from stored statements (imo-1976-p04, ahsme-1956-p47, aime1-2024-p05,
+# amc8-2022-p23, amc10a-2025-p01, amc10b-2024-p01): solution text that ended up after the
+# statement and was rendered into the problem image.
+
+CHOICES = r'<p><img alt="$\textbf{(A)}\ 6 \qquad \textbf{(E)}\ 36$" class="latex" src="https://x/c.png"/></p>'
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        '<p><br/>\n</p>\n<h3><span class="mw-headline" id="Solution_1">Solution 1</span></h3>\n'
+        "<p>Since 3*3 &gt; 2*2*2...</p>",
+        "<p>Solution\n</p>",
+        "<p>==Sol\n~wamofan\n</p>",
+        "<p>== This page has some problems with rendering; thanks to everyone trying to fix it\xa0:)\n</p>",
+        '<h3><span class="mw-headline">Modified Problem in Certain China Testpapers</span></h3><p>Variant.</p>',
+        '<div class="mw-heading mw-heading3"><h3>Video Solution</h3></div><p>link</p>',
+    ],
+)
+def test_solution_text_after_the_statement_is_trimmed(tail):
+    from mathbot.sources.aops_wiki import trim_statement
+
+    statement = "<p>How many days would it take?\n</p>" + CHOICES
+    trimmed = trim_statement(statement + tail)
+    assert "How many days" in trimmed and "textbf{(E)}" in trimmed
+    for leaked in ("Solution", "Since 3", "==", "wamofan", "Variant", "link"):
+        assert leaked not in trimmed
+
+
+def test_a_wiki_heading_marker_inside_the_choices_paragraph_is_trimmed():
+    from mathbot.sources.aops_wiki import trim_statement
+
+    html = (
+        '<p>What is CE?\n</p><p><img alt="[asy]draw(A--B);[/asy]" class="latexcenter" src="https://x/d.png"/>'
+        "\n==Video Solution\n</p>"
+    )
+    trimmed = trim_statement(html)
+    assert 'src="https://x/d.png"' in trimmed and "Video" not in trimmed
+
+
+def test_spacer_paragraphs_before_the_cut_are_dropped_but_bare_text_is_kept():
+    from mathbot.sources.aops_wiki import trim_statement
+
+    assert trim_statement("<p>Find x.</p><p><br/>\n</p>\n<h3>Solution 1</h3><p>x=2</p>") == "<p>Find x.</p>"
+    assert trim_statement("Find the value of y.<h3>Solution</h3>") == "Find the value of y."
+
+
+def test_statements_that_merely_mention_solutions_are_untouched():
+    from mathbot.sources.aops_wiki import trim_statement
+
+    html = "<p>How many integer solutions does the equation have?</p><p>Solutions are counted with sign.</p>"
+    assert trim_statement(html) == html
+    only_heading = "<h3>Problem</h3>"  # nothing would be left: keep the input, let validation decide
+    assert trim_statement(only_heading) == only_heading
+
+
+def test_live_statement_extraction_drops_broken_heading_paragraphs():
+    page = (
+        '<div class="mw-parser-output"><h2><span class="mw-headline">Problem</span></h2>'
+        "<p>Find the number of ordered pairs.</p><p>==Video Solution\nhttps://youtu.be/x</p>"
+        '<h2><span class="mw-headline">Solution</span></h2><p>Answer is 5.</p></div>'
+    )
+    statement = extract_statement(page)
+    assert "ordered pairs" in statement and "Video" not in statement and "youtu" not in statement

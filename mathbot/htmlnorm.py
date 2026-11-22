@@ -22,7 +22,7 @@ from bs4 import BeautifulSoup, Comment, Tag
 
 _DROP_TAGS = ("script", "style", "noscript", "iframe", "object", "embed", "form", "input", "button", "link", "meta")
 _DROP_SELECTORS = (".mw-editsection", "#toc", ".toc", ".printfooter", ".catlinks")
-_URL_ATTRS = ("src", "href")
+_URL_ATTRS = ("src", "href", "xlink:href")
 # AoPS renders TeX to images; the alt text is the TeX source.
 _LATEX_IMG_CLASSES = {"latex", "latexcenter", "asy-image"}
 MIN_TEXT_CHARS = 5
@@ -33,7 +33,6 @@ class NormalizedContent:
     html: str
     text: str
     content_hash: str
-    image_urls: tuple[str, ...]  # remote (http/https) images, in document order
 
 
 class InvalidContentError(ValueError):
@@ -41,11 +40,31 @@ class InvalidContentError(ValueError):
 
 
 def sha256_text(text: str) -> str:
+    """Hex SHA-256 of ``text`` as UTF-8: content hashes and source revisions."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _soup(fragment: str) -> BeautifulSoup:
     return BeautifulSoup(fragment, "html.parser")
+
+
+def is_remote_url(src: object) -> bool:
+    """True for an absolute http(s) URL (not a ``data:`` URI or a relative path)."""
+    return isinstance(src, str) and src.startswith(("http://", "https://"))
+
+
+def remote_images(html: str) -> list[str]:
+    """Distinct http(s) ``<img>`` URLs in ``html``, in document order."""
+    return list(dict.fromkeys(img["src"] for img in _soup(html).find_all("img") if is_remote_url(img.get("src"))))
+
+
+# Browsers remove ASCII tabs, newlines and control characters from a URL before reading its
+# scheme, so "java\tscript:" is still a script URL.
+_URL_IGNORED_CHARS = re.compile(r"[\x00-\x20]")
+
+
+def _is_script_url(value: str) -> bool:
+    return _URL_IGNORED_CHARS.sub("", value).lower().startswith(("javascript:", "vbscript:"))
 
 
 def normalize_fragment(fragment: str, base_url: str) -> NormalizedContent:
@@ -73,7 +92,7 @@ def normalize_fragment(fragment: str, base_url: str) -> NormalizedContent:
             if not isinstance(value, str):
                 continue
             value = value.strip()
-            if value.lower().startswith(("javascript:", "vbscript:")):
+            if _is_script_url(value):
                 del tag.attrs[attr]
             elif value.startswith(("data:", "#")):
                 tag.attrs[attr] = value
@@ -87,19 +106,12 @@ def normalize_fragment(fragment: str, base_url: str) -> NormalizedContent:
 
     html = str(soup).strip()
     text = extract_text(soup)
-    image_urls = tuple(
-        dict.fromkeys(
-            img["src"]
-            for img in soup.find_all("img")
-            if isinstance(img.get("src"), str) and img["src"].startswith(("http://", "https://"))
-        )
-    )
 
     has_image = soup.find("img") is not None
     if len(re.sub(r"\s", "", text)) < MIN_TEXT_CHARS and not has_image:
         raise InvalidContentError("statement is empty after normalization")
 
-    return NormalizedContent(html=html, text=text, content_hash=sha256_text(html), image_urls=image_urls)
+    return NormalizedContent(html=html, text=text, content_hash=sha256_text(html))
 
 
 def extract_text(node: BeautifulSoup | Tag | str) -> str:

@@ -1,20 +1,18 @@
 """Render manifest, asset cache and storage logic. A fake renderer stands in for Chromium;
-the one real-browser test is skipped automatically when Chromium is not installed."""
+the real-browser tests are skipped automatically when Chromium is not installed."""
 
 from __future__ import annotations
 
 import asyncio
 import base64
 import dataclasses
-import os
+import re
 from pathlib import Path
 
 import pytest
 
 from mathbot.config import RenderSettings, StorageSettings, load_settings
-from mathbot.htmlnorm import normalize_fragment
-from mathbot.http import HttpStatusError, Response
-from mathbot.models import EditionRef, ParsedProblem
+from mathbot.http import HttpStatusError
 from mathbot.render.assets import AssetCache, AssetError, sniff_image
 from mathbot.render.pipeline import (
     PlaywrightRenderer,
@@ -26,45 +24,19 @@ from mathbot.render.pipeline import (
 )
 from mathbot.render.storage import LocalStorage, S3Storage, StorageError
 from mathbot.render.template import build_document, needs_mathjax, renderer_version
-from mathbot.render.vendor import ASSET_ORIGIN, missing_assets
+from mathbot.render.vendor import ASSET_ORIGIN
 from mathbot.validate import validate
-from tests.conftest import make_png
+from tests.conftest import DictClient, FakeRenderer, add_problem, make_png, render_in_chromium, settings_repo
 
 SETTINGS = RenderSettings(concurrency=2, retries=1)
-
-
-def add_problem(repo, number=1, html="<p>What is the value of 6 times 7?</p>", key="IMO", year=2020):
-    ref = EditionRef(key, year, f"{year} {key}", "https://example.org/e", None, None)
-    repo.upsert_edition(ref)
-    parsed = ParsedProblem(number, html, f"https://example.org/e/{number}", raw_payload=html)
-    repo.upsert_problem(ref, parsed, normalize_fragment(html, parsed.source_url), provider="aops_wiki")
-    return repo.get_problem(key, year, number)
-
-
-class FakeRenderer:
-    def __init__(self, outputs=None):
-        self.outputs = list(outputs or [])
-        self.jobs: list[RenderJob] = []
-        self.active = self.peak = 0
-
-    async def render(self, job: RenderJob) -> bytes:
-        self.jobs.append(job)
-        self.active += 1
-        self.peak = max(self.peak, self.active)
-        await asyncio.sleep(0.01)
-        self.active -= 1
-        output = self.outputs.pop(0) if self.outputs else make_png()
-        if isinstance(output, Exception):
-            raise output
-        return output
 
 
 def pipeline_for(repo, tmp_path, settings=SETTINGS, assets=None) -> RenderPipeline:
     return RenderPipeline(repo, settings, tmp_path / "renders", assets)
 
 
-def run(pipeline, problems, renderer):
-    return asyncio.run(pipeline.render(problems, renderer))
+def run(pipeline, problems, renderer, failures=None):
+    return asyncio.run(pipeline.render(problems, renderer, prefetch_failures=failures))
 
 
 # --------------------------------------------------------------------------- manifest
@@ -184,24 +156,11 @@ def test_document_includes_title_and_only_loads_mathjax_when_needed():
     # every external reference in the page points at the locally served pinned assets
     for doc in (plain, tex):
         assert "cdn.jsdelivr" not in doc and "http://" not in doc
-        assert all(url.startswith(ASSET_ORIGIN) for url in __import__("re").findall(r"https://[^'\")]+", doc))
+        assert all(url.startswith(ASSET_ORIGIN) for url in re.findall(r"https://[^'\")]+", doc))
     assert needs_mathjax("\\[a\\]") and not needs_mathjax("$5 and $6")
 
 
 # --------------------------------------------------------------------------- assets
-
-
-class AssetClient:
-    def __init__(self, responses):
-        self.responses = responses
-        self.calls: list[str] = []
-
-    def get(self, url, **kwargs):
-        self.calls.append(url)
-        result = self.responses[url]
-        if isinstance(result, Exception):
-            raise result
-        return Response(url, 200, {"content-type": "image/png"}, result)
 
 
 IMG = "https://latex.example.org/a/b/c.png"
@@ -209,7 +168,7 @@ IMG = "https://latex.example.org/a/b/c.png"
 
 def test_remote_images_are_cached_by_hash_and_inlined(repo, tmp_path):
     problem = add_problem(repo, html=f'<p>Compute <img src="{IMG}" class="latex" alt="$x$"> please.</p>')
-    client = AssetClient({IMG: make_png(20, 10)})
+    client = DictClient({IMG: make_png(20, 10)})
     cache = AssetCache(repo, client, tmp_path / "assets", ttl=3600)
 
     inlined = cache.inline(problem.id, problem.statement_html)
@@ -227,7 +186,7 @@ def test_remote_images_are_cached_by_hash_and_inlined(repo, tmp_path):
 
 
 def test_expired_assets_are_downloaded_again(repo, tmp_path):
-    client = AssetClient({IMG: make_png(20, 10)})
+    client = DictClient({IMG: make_png(20, 10)})
     AssetCache(repo, client, tmp_path / "assets", ttl=-1).ensure(IMG)  # stored already expired
     fresh = AssetCache(repo, client, tmp_path / "assets", ttl=3600)
     fresh.ensure(IMG)  # expired -> downloaded again
@@ -238,7 +197,7 @@ def test_expired_assets_are_downloaded_again(repo, tmp_path):
 def test_failed_or_non_image_assets_fail_the_render_with_a_record(repo, tmp_path):
     problem = add_problem(repo, html=f'<p>Look: <img src="{IMG}" alt="diagram"></p>')
     for response in (HttpStatusError("HTTP 404", url=IMG, status=404), b"<html>Just a moment...</html>", b""):
-        cache = AssetCache(repo, AssetClient({IMG: response}), tmp_path / "assets", ttl=3600)
+        cache = AssetCache(repo, DictClient({IMG: response}), tmp_path / "assets", ttl=3600)
         with pytest.raises(AssetError):
             cache.ensure(IMG)
         assert repo.get_asset(IMG)["status"] == "failed"
@@ -251,7 +210,7 @@ def test_failed_or_non_image_assets_fail_the_render_with_a_record(repo, tmp_path
 
 
 def test_failed_downloads_are_not_retried_until_the_negative_cache_expires(repo, tmp_path):
-    client = AssetClient({IMG: HttpStatusError("HTTP 403", url=IMG, status=403)})
+    client = DictClient({IMG: HttpStatusError("HTTP 403", url=IMG, status=403)})
     cache = AssetCache(repo, client, tmp_path / "assets", ttl=3600)
     for _ in range(3):
         with pytest.raises(AssetError):
@@ -276,13 +235,13 @@ def test_sniff_image_uses_bytes_not_headers():
 def test_local_storage_round_trip_and_path_safety(tmp_path):
     storage = LocalStorage(tmp_path / "store")
     storage.put("imo/a.png", b"data", "image/png")
-    assert storage.exists("imo/a.png") and storage.get("imo/a.png") == b"data"
+    assert (tmp_path / "store" / "imo" / "a.png").read_bytes() == b"data"
     storage.delete("imo/a.png")
-    assert not storage.exists("imo/a.png")
-    with pytest.raises(StorageError):
-        storage.get("imo/a.png")
+    assert not (tmp_path / "store" / "imo" / "a.png").exists()
+    storage.delete("imo/a.png")  # deleting a missing object is not an error
     with pytest.raises(StorageError):
         storage.put("../escape.png", b"x", "image/png")
+    assert not (tmp_path / "escape.png").exists()
 
 
 class FakeS3:
@@ -316,7 +275,7 @@ def test_upload_is_separate_incremental_and_reset_by_rerender(repo, tmp_path):
 
     first = pipeline.upload(storage)
     assert (first.pending, first.uploaded, first.failed) == (1, 1, 0)
-    assert storage.exists(render_key(problem, pipeline.version))
+    assert (tmp_path / "bucket" / render_key(problem, pipeline.version)).is_file()
     assert repo.current_render(problem.id)["uploaded_at"] is not None
     assert pipeline.upload(storage).pending == 0  # nothing left to upload
     assert pipeline.upload(storage, force=True).uploaded == 1
@@ -341,19 +300,15 @@ def test_local_upload_marks_renders_published_without_copying(repo, tmp_path):
 def test_upload_command_copies_nothing_with_local_storage(tmp_path, capsys):
     import argparse
 
-    from mathbot import cli
-    from mathbot.contests import ContestRegistry
-    from mathbot.db import Repository, open_database
+    from mathbot.cli import images as cli_images
 
     settings = load_settings({"DATA_DIR": str(tmp_path), "STORAGE_BACKEND": "local"})
-    repo = Repository(open_database(settings.database_path))
-    repo.sync_registry(ContestRegistry())
-    add_problem(repo)
-    pipeline = RenderPipeline(repo, SETTINGS, settings.renders_dir)
-    run(pipeline, pipeline.plan(), FakeRenderer())
-    repo.conn.close()
+    with settings_repo(settings) as repo:
+        add_problem(repo)
+        pipeline = RenderPipeline(repo, SETTINGS, settings.renders_dir)
+        run(pipeline, pipeline.plan(), FakeRenderer())
 
-    assert cli.cmd_upload(argparse.Namespace(force=False), dataclasses.replace(settings, render=SETTINGS)) == 0
+    assert cli_images.cmd_upload(argparse.Namespace(force=False), dataclasses.replace(settings, render=SETTINGS)) == 0
     assert "nothing is copied" in capsys.readouterr().out
     assert not (tmp_path / "object_store").exists()
 
@@ -369,7 +324,7 @@ def test_upload_failure_is_reported_and_left_pending(repo, tmp_path):
 
     report = pipeline.upload(Broken(tmp_path / "bucket"))
     assert (report.uploaded, report.failed) == (0, 1) and "bucket unreachable" in report.errors[0][1]
-    assert len(repo.renders_pending_upload(pipeline.version)) == 1
+    assert len(repo.current_renders(pipeline.version, pending_only=True)) == 1
 
 
 def test_cleanup_removes_superseded_renders_and_orphans(repo, tmp_path):
@@ -392,7 +347,7 @@ def test_cleanup_removes_superseded_renders_and_orphans(repo, tmp_path):
     counts = pipeline.cleanup(storage)
     assert counts == {"stale_records": 1, "local_files": 1, "remote_objects": 1, "orphan_files": 1}
     assert not (tmp_path / "renders" / old_key).exists() and not orphan.exists()
-    assert not storage.exists(old_key)
+    assert not (tmp_path / "bucket" / old_key).exists()
     assert (tmp_path / "renders" / render_key(new, pipeline.version)).exists()
     assert len(repo.all_renders()) == 1
 
@@ -431,18 +386,9 @@ def test_validate_flags_integrity_problems(repo, tmp_path):
 # --------------------------------------------------------------------------- real browser (optional)
 
 
-def _render_assets_dir() -> Path:
-    return load_settings(dict(os.environ), load_dotenv_file=False).render_assets_dir
-
-
 @pytest.mark.browser
-def test_real_chromium_renders_tex_offline_and_blocks_network(repo, tmp_path):
+def test_real_chromium_renders_tex_offline_and_blocks_network(repo, tmp_path, chromium_assets_dir):
     """Renders TeX with the pinned local MathJax, and refuses every remote request."""
-    pytest.importorskip("playwright")
-    assets_dir = _render_assets_dir()
-    if missing_assets(assets_dir):
-        pytest.skip(f"pinned render assets not installed in {assets_dir} (python -m mathbot install-render-assets)")
-
     pixel = base64.b64encode(make_png(40, 40)).decode()
     good = add_problem(
         repo,
@@ -459,17 +405,7 @@ def test_real_chromium_renders_tex_offline_and_blocks_network(repo, tmp_path):
     )
     settings = RenderSettings(concurrency=1, retries=0)
     pipeline = RenderPipeline(repo, settings, tmp_path / "renders")
-
-    async def go():
-        try:
-            async with PlaywrightRenderer(settings, assets_dir) as renderer:
-                return await pipeline.render([good, remote], renderer)
-        except RenderError as exc:
-            if "could not start Chromium" in str(exc):
-                pytest.skip("Chromium is not installed (python -m playwright install chromium)")
-            raise
-
-    report = asyncio.run(go())
+    report = render_in_chromium(pipeline, settings, chromium_assets_dir, [good, remote])
     assert report.rendered == 1 and report.failed == 1, report.errors
     assert report.errors[0][0] == remote.id and "image failed to load" in report.errors[0][1]
     row = repo.current_render(good.id)
@@ -488,7 +424,7 @@ def test_renderer_refuses_to_start_without_pinned_assets(tmp_path):
 # --------------------------------------------------------------------------- prefetch / upload scope
 
 
-class CountingClient(AssetClient):
+class CountingClient(DictClient):
     def get(self, url, **kwargs):
         if getattr(self, "frozen", False):
             raise AssertionError("network used during the render phase")
@@ -507,15 +443,11 @@ def test_remote_images_are_prefetched_before_rendering_and_never_fetched_by_work
 
     client.frozen = True  # from here on any network call fails the test
     renderer = FakeRenderer()
-    report = run_with(pipeline, [ok, broken], renderer, failures)
+    report = run(pipeline, [ok, broken], renderer, failures)
     assert (report.rendered, report.failed) == (1, 1)
     assert [job.problem.id for job in renderer.jobs] == [ok.id]
     assert "data:image/png;base64," in renderer.jobs[0].document
     assert report.errors[0] == (broken.id, f"asset: {failures[broken.id]}")
-
-
-def run_with(pipeline, problems, renderer, failures):
-    return asyncio.run(pipeline.render(problems, renderer, prefetch_failures=failures))
 
 
 def test_render_without_prefetch_fails_cleanly_instead_of_fetching(repo, tmp_path):
@@ -539,7 +471,7 @@ def test_force_upload_only_sends_current_renders(repo, tmp_path):
     storage = LocalStorage(tmp_path / "bucket")
     report = pipeline.upload(storage, force=True)
     assert report.pending == 1 and report.uploaded == 1  # not the superseded content, not the other version
-    assert storage.exists(render_key(new, pipeline.version))
+    assert (tmp_path / "bucket" / render_key(new, pipeline.version)).is_file()
 
 
 def test_validate_flags_amc_problems_without_answer_choices(repo, tmp_path):
@@ -553,11 +485,7 @@ def test_validate_flags_amc_problems_without_answer_choices(repo, tmp_path):
 
 
 @pytest.mark.browser
-def test_real_chromium_typesets_aops_latex_alt_text_and_fails_on_tex_errors(repo, tmp_path):
-    pytest.importorskip("playwright")
-    assets_dir = _render_assets_dir()
-    if missing_assets(assets_dir):
-        pytest.skip(f"pinned render assets not installed in {assets_dir} (python -m mathbot install-render-assets)")
+def test_real_chromium_typesets_aops_latex_alt_text_and_fails_on_tex_errors(repo, tmp_path, chromium_assets_dir):
     latex = "https://latex.artofproblemsolving.com/a/b/c/abc.png"  # robots-disallowed host: never fetched
     choices = r"$\textbf{(A) }\frac{1}{2}\qquad\textbf{(B) }2$"
     good = add_problem(repo, html=f'<p>Find <img class="latex" src="{latex}" alt="{choices}">.</p>', key="AMC10A")
@@ -565,16 +493,289 @@ def test_real_chromium_typesets_aops_latex_alt_text_and_fails_on_tex_errors(repo
     broken = add_problem(repo, 2, f'<p>Table: <img class="latex" src="{latex}" alt="{table}"></p>', key="AMC10A")
     settings = RenderSettings(concurrency=1, retries=0)
     pipeline = RenderPipeline(repo, settings, tmp_path / "renders")
-
-    async def go():
-        try:
-            async with PlaywrightRenderer(settings, assets_dir) as renderer:
-                return await pipeline.render([good, broken], renderer)
-        except RenderError as exc:
-            if "could not start Chromium" in str(exc):
-                pytest.skip("Chromium is not installed (python -m playwright install chromium)")
-            raise
-
-    report = asyncio.run(go())
+    report = render_in_chromium(pipeline, settings, chromium_assets_dir, [good, broken])
     assert report.rendered == 1 and report.failed == 1, report.errors
     assert report.errors[0][0] == broken.id and "TeX error" in report.errors[0][1]
+
+
+# --------------------------------------------------------------------------- Playwright renderer (fake browser objects)
+
+
+def test_renderer_closes_the_browser_when_setup_fails_part_way(tmp_path, monkeypatch):
+    """__aexit__ never runs when __aenter__ raises, so a failed setup must clean up itself."""
+    playwright_api = pytest.importorskip("playwright.async_api")
+
+    class Browser:
+        closed = False
+
+        async def new_context(self, **_options):
+            raise RuntimeError("context refused")
+
+        async def close(self):
+            self.closed = True
+
+    class Playwright:
+        def __init__(self):
+            self.browser, self.stopped = Browser(), False
+            self.chromium = self
+
+        async def launch(self, **_options):
+            return self.browser
+
+        async def stop(self):
+            self.stopped = True
+
+        async def start(self):
+            return self
+
+    fake = Playwright()
+    monkeypatch.setattr(playwright_api, "async_playwright", lambda: fake)
+    monkeypatch.setattr("mathbot.render.pipeline.require_assets", lambda root: None)
+
+    async def go():
+        async with PlaywrightRenderer(SETTINGS, tmp_path):
+            pass
+
+    with pytest.raises(RuntimeError, match="context refused"):
+        asyncio.run(go())
+    assert fake.browser.closed and fake.stopped
+
+
+class Page:
+    def __init__(self, ready_after: float = 0.0):
+        self.ready_after = ready_after
+        self.closed = False
+
+    async def set_content(self, html, **_options):
+        pass
+
+    async def evaluate(self, script, *_args):
+        await asyncio.sleep(self.ready_after)
+
+    async def close(self):
+        self.closed = True
+
+
+def test_a_page_that_never_becomes_ready_times_out_and_is_replaced(tmp_path):
+    """RENDER_TIMEOUT_MS bounds the wait for MathJax / images too, not only Playwright's own calls."""
+    settings = dataclasses.replace(SETTINGS, timeout_ms=50)
+    renderer = PlaywrightRenderer(settings, tmp_path)
+    hanging, fresh = Page(ready_after=5), Page()
+
+    async def new_page():
+        return fresh
+
+    async def go():
+        renderer._context = type("Context", (), {"new_page": staticmethod(new_page)})()
+        renderer._pages = asyncio.Queue()
+        renderer._pages.put_nowait(hanging)
+        with pytest.raises(RenderError, match="not ready after 50 ms"):
+            await asyncio.wait_for(renderer.render(RenderJob(None, "<p>x</p>", True)), 2)
+        return renderer._pages.get_nowait()
+
+    assert asyncio.run(go()) is fresh and hanging.closed  # the stuck page is not reused
+
+    with pytest.raises(RuntimeError, match="outside 'async with'"):
+        asyncio.run(PlaywrightRenderer(settings, tmp_path).render(RenderJob(None, "<p>x</p>", True)))
+
+
+def test_an_image_that_cannot_be_saved_fails_only_that_problem(repo, tmp_path, monkeypatch):
+    """One locked file used to end the whole render run (and close the browser under the others)."""
+    from mathbot.render import pipeline as pipeline_module
+
+    locked, saved = add_problem(repo, 1), add_problem(repo, 2, "<p>A second statement to render.</p>")
+    real_write = pipeline_module.atomic_write_bytes
+
+    def write(path, data):
+        if path.name.startswith(locked.id):
+            raise PermissionError(13, "Access is denied")
+        real_write(path, data)
+
+    monkeypatch.setattr(pipeline_module, "atomic_write_bytes", write)
+    pipeline = pipeline_for(repo, tmp_path, dataclasses.replace(SETTINGS, concurrency=1))
+    report = run(pipeline, [locked, saved], FakeRenderer())
+    assert (report.rendered, report.failed) == (1, 1)
+    assert report.errors[0][0] == locked.id and "could not save the image" in report.errors[0][1]
+    assert repo.current_render(saved.id) is not None and repo.current_render(locked.id) is None
+
+
+def test_cleanup_keeps_an_older_renderers_picture_until_it_is_replaced(repo, tmp_path):
+    """Deleting old-version images before the new version has rendered them leaves the bot with text only."""
+    waiting, replaced = add_problem(repo, 1), add_problem(repo, 2, "<p>A second statement to render.</p>")
+    old = pipeline_for(repo, tmp_path)
+    run(old, old.plan(), FakeRenderer())
+    new = pipeline_for(repo, tmp_path, dataclasses.replace(SETTINGS, viewport_width=1200))
+    run(new, [replaced], FakeRenderer())
+
+    counts = new.cleanup()
+    assert counts == {"stale_records": 1, "local_files": 1, "remote_objects": 0, "orphan_files": 0}
+    assert (tmp_path / "renders" / render_key(waiting, old.version)).is_file()
+    assert not (tmp_path / "renders" / render_key(replaced, old.version)).exists()
+    assert repo.current_render(waiting.id)["renderer_version"] == old.version  # still what the bot serves
+    assert repo.current_render(replaced.id)["renderer_version"] == new.version
+
+    failed = add_problem(repo, 3, "<p>A third statement whose render fails.</p>")
+    run(old, [failed], FakeRenderer([RenderError("boom"), RenderError("boom")]))
+    assert new.cleanup()["stale_records"] == 1  # a failed attempt has no picture to keep
+
+
+def test_riff_files_are_only_images_when_they_are_webp():
+    assert sniff_image(b"RIFF\x10\x00\x00\x00WEBPVP8 ") == ("image/webp", ".webp")
+    with pytest.raises(AssetError):
+        sniff_image(b"RIFF\x10\x00\x00\x00WAVEfmt ")  # audio, not an image
+
+
+class _BrokenPage:
+    """A Playwright page that has crashed: every call fails."""
+
+    def __init__(self):
+        self.closed = False
+
+    async def set_content(self, *_args, **_kwargs):
+        raise RuntimeError("Target page, context or browser has been closed")
+
+    async def close(self):
+        self.closed = True
+
+
+class _FreshContext:
+    def __init__(self):
+        self.opened = 0
+
+    async def new_page(self):
+        self.opened += 1
+        return object()
+
+
+def test_a_crashed_page_is_replaced_instead_of_poisoning_the_pool():
+    from mathbot.render.pipeline import PlaywrightRenderer, RenderError, RenderJob
+
+    renderer = PlaywrightRenderer(load_settings({}).render, Path("unused"))
+    broken, context = _BrokenPage(), _FreshContext()
+
+    async def go():
+        renderer._context = context
+        renderer._pages = asyncio.Queue()
+        renderer._pages.put_nowait(broken)
+        with pytest.raises(RenderError, match="closed"):
+            await renderer.render(RenderJob(problem=None, document="<p>x</p>", uses_mathjax=False))
+        return renderer._pages.get_nowait()
+
+    replacement = asyncio.run(go())
+    assert broken.closed and context.opened == 1 and replacement is not broken
+
+
+def test_vendored_files_are_read_and_verified_once(tmp_path, monkeypatch):
+    from mathbot.render import vendor
+
+    item = vendor.VENDORED[1]
+    data = b"font bytes"
+    (tmp_path / item.path).parent.mkdir(parents=True)
+    (tmp_path / item.path).write_bytes(data)
+    monkeypatch.setattr(
+        vendor, "BY_PATH", {item.path: vendor.VendoredFile(item.path, item.url, vendor._sha256(data), "font/woff")}
+    )
+    reads = []
+    original = Path.read_bytes
+    monkeypatch.setattr(Path, "read_bytes", lambda self: reads.append(self) or original(self))
+    cache = vendor.AssetReader(tmp_path)
+    assert cache.read(item.path) == (data, "font/woff")
+    assert cache.read(item.path) == (data, "font/woff")
+    assert cache.read("not/pinned.js") is None
+    assert len(reads) == 1
+
+
+def test_an_unexpected_error_building_one_job_fails_only_that_problem(repo, tmp_path):
+    good, bad = add_problem(repo, number=1), add_problem(repo, number=2)
+    pipeline = RenderPipeline(repo, load_settings({}).render, tmp_path / "renders")
+    original = pipeline._job
+
+    def job(problem):
+        if problem.id == bad.id:
+            raise ValueError("malformed statement")
+        return original(problem)
+
+    pipeline._job = job
+    report = asyncio.run(pipeline.render([good, bad], FakeRenderer()))
+    assert (report.rendered, report.failed) == (1, 1)
+    assert "malformed statement" in report.errors[0][1]
+
+
+def test_cleanup_reports_a_storage_failure_instead_of_crashing(tmp_path, monkeypatch, capsys):
+    import argparse
+
+    from mathbot.cli import images as cli_images
+    from mathbot.render import storage as storage_module
+
+    env = {"DATA_DIR": str(tmp_path), "STORAGE_BACKEND": "s3", "S3_BUCKET": "b"}
+    settings = load_settings({**env, "S3_ACCESS_KEY_ID": "k", "S3_SECRET_ACCESS_KEY": "s"})
+    with settings_repo(settings) as repo:
+        old = add_problem(repo)
+        pipeline = RenderPipeline(repo, settings.render, settings.renders_dir)
+        asyncio.run(pipeline.render([old], FakeRenderer()))
+        pipeline.upload(LocalStorage(tmp_path / "bucket"))
+        add_problem(repo, html="<p>A corrected statement of the problem.</p>")  # the old render is now stale
+
+    class Unreachable(LocalStorage):
+        def delete(self, key):
+            raise StorageError("bucket unreachable")
+
+    monkeypatch.setattr(storage_module, "build_storage", lambda _settings: Unreachable(tmp_path / "bucket"))
+    assert cli_images.cmd_cleanup(argparse.Namespace(dry_run=False, remote=True), settings) == 1
+    assert "bucket unreachable" in capsys.readouterr().err
+
+
+@pytest.mark.browser
+def test_real_chromium_shrinks_over_wide_content_instead_of_cutting_it_off(repo, tmp_path, chromium_assets_dir):
+    """A block wider than the page (like a long display equation, it cannot wrap) must be
+    scaled into the picture: the red marker at its right end has to be in the PNG."""
+    from PIL import Image
+
+    wide = add_problem(
+        repo,
+        html='<p>Use the figure below.</p><div style="width:1660px">'
+        '<div style="margin-left:1600px;width:60px;height:60px;background:#ff0000"></div></div>',
+    )
+    settings = RenderSettings(concurrency=1, retries=0)
+    pipeline = RenderPipeline(repo, settings, tmp_path / "renders")
+    report = render_in_chromium(pipeline, settings, chromium_assets_dir, [wide])
+    assert report.rendered == 1, report.errors
+    image = Image.open(tmp_path / "renders" / repo.current_render(wide.id)["local_path"]).convert("RGB")
+    assert image.width == settings.viewport_width * settings.device_scale_factor
+    red = sum(1 for r, g, b in image.getdata() if r > 200 and g < 60 and b < 60)
+    assert red > 100  # the marker cell survived (it used to fall outside the screenshot)
+
+
+def test_uploads_run_in_parallel_and_each_is_recorded(repo, tmp_path):
+    """Object storage is latency-bound (about 0.5 s per PUT to R2), so uploads overlap."""
+    import threading
+    import time
+
+    problems = [add_problem(repo, n, f"<p>Problem number {n} of the parallel test.</p>") for n in range(1, 13)]
+    pipeline = RenderPipeline(repo, load_settings({}).render, tmp_path / "renders")
+    asyncio.run(pipeline.render(problems, FakeRenderer()))
+
+    class SlowStorage(LocalStorage):
+        def __init__(self, root):
+            super().__init__(root)
+            self.active = self.peak = 0
+            self.lock = threading.Lock()
+
+        def put(self, key, data, content_type, *, cache_control=None):
+            with self.lock:
+                self.active += 1
+                self.peak = max(self.peak, self.active)
+            time.sleep(0.05)
+            if key.endswith(problems[3].content_hash[:12] + f"-r{pipeline.version}.png"):
+                with self.lock:
+                    self.active -= 1
+                raise StorageError("bucket hiccup")
+            super().put(key, data, content_type)
+            with self.lock:
+                self.active -= 1
+
+    storage = SlowStorage(tmp_path / "bucket")
+    report = pipeline.upload(storage)
+    assert (report.uploaded, report.failed) == (11, 1) and storage.peak > 1
+    pending = repo.current_renders(pipeline.version, pending_only=True)
+    assert [r["problem_id"] for r in pending] == [problems[3].id]  # only the failed one is retried
