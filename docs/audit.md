@@ -1,7 +1,7 @@
 # Audit (overhaul branch)
 
-Status: Phase 1 complete. Fix progress is tracked in the checklist at the bottom;
-if a session runs out of context, continue from there.
+Status: all phases complete (see docs/overhaul-report.md). The checklist at the bottom is done;
+the findings below are kept as the record of what was found.
 
 ## Baseline (checkpoint commit `0d414a9`)
 
@@ -112,18 +112,21 @@ Cohesive but large. Queries are parameterized (the only f-strings build `IN (?,?
 
 ## Fix checklist
 
-- [ ] B1 migration 3 recorded; DB opens again
-- [ ] B2 build_adapters
-- [ ] P1 CEMC answer regex + parser version in edition hash
-- [ ] P3/P2 statement trimming (legacy + live wiki)
-- [ ] http: robots with params, typed transport errors, charset fallback
-- [ ] ingest: adapter exceptions fail one edition; explicit warning flag
-- [ ] cemc: answers guarded by solution count
-- [ ] migrate BEGIN IMMEDIATE; CLI error handling; int_set errors
-- [ ] snapshot streaming download
-- [ ] assets RIFF/WEBP; htmlnorm URL scheme check
-- [ ] renderer: page replacement on any error; vendored bytes cached
-- [ ] render template v7: formula scale, trailing space, fit-to-width
-- [ ] bot: navigation, re-roll, combined input, filters, no-repeat, prefer rendered
-- [ ] validate: leaked solutions, TeX delimiters, missing MC answers
-- [ ] docs
+- [x] B1 migration 3 recorded; DB opens again
+- [x] B2 build_adapters
+- [x] P1 CEMC answer regex + parser version in edition hash
+- [x] P3/P2 statement trimming (legacy + live wiki)
+- [x] http: robots with params, typed transport errors, charset fallback
+- [x] ingest: adapter exceptions fail one edition; explicit warning flag
+- [x] cemc: answers guarded by solution count
+- [x] migrate BEGIN IMMEDIATE; CLI error handling; int_set errors
+- [x] snapshot streaming download
+- [x] assets RIFF/WEBP; htmlnorm URL scheme check
+- [x] renderer: page replacement on any error; vendored bytes cached
+- [x] render template v7: formula scale, trailing space, fit-to-width
+- [x] bot: navigation, re-roll, combined input, filters, no-repeat, prefer rendered
+- [x] validate: leaked solutions, TeX delimiters, missing MC answers
+- [x] docs
+
+Deferred (see the report): caching a failed robots.txt fetch per host; splitting
+`db/repo.py`; renaming `iter_problems`.
