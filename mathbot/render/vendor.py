@@ -127,14 +127,29 @@ def install_assets(root: Path, client: PoliteClient) -> dict[str, str]:
     return outcomes
 
 
-def read_asset(root: Path, path: str) -> tuple[bytes, str] | None:
-    """Bytes and content type for a request path, only if it is a verified pinned file."""
-    item = BY_PATH.get(path)
-    if item is None:
-        return None
-    file = root / item.path
-    try:
-        data = file.read_bytes()
-    except OSError:
-        return None
-    return (data, item.content_type) if _sha256(data) == item.sha256 else None
+class AssetReader:
+    """Serves the pinned files to the render page, each read and verified once.
+
+    Every rendered page loads the 2 MB MathJax bundle; reading and hashing it again
+    for each of thousands of pages was wasted work.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self._verified: dict[str, tuple[bytes, str]] = {}
+
+    def read(self, path: str) -> tuple[bytes, str] | None:
+        """Bytes and content type for a request path, only if it is a verified pinned file."""
+        if path in self._verified:
+            return self._verified[path]
+        item = BY_PATH.get(path)
+        if item is None:
+            return None
+        try:
+            data = (self.root / item.path).read_bytes()
+        except OSError:
+            return None
+        if _sha256(data) != item.sha256:
+            return None
+        self._verified[path] = (data, item.content_type)
+        return self._verified[path]

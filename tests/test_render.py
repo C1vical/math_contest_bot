@@ -7,6 +7,7 @@ import asyncio
 import base64
 import dataclasses
 import re
+from pathlib import Path
 
 import pytest
 
@@ -622,3 +623,79 @@ def test_riff_files_are_only_images_when_they_are_webp():
     assert sniff_image(b"RIFF\x10\x00\x00\x00WEBPVP8 ") == ("image/webp", ".webp")
     with pytest.raises(AssetError):
         sniff_image(b"RIFF\x10\x00\x00\x00WAVEfmt ")  # audio, not an image
+
+
+class _BrokenPage:
+    """A Playwright page that has crashed: every call fails."""
+
+    def __init__(self):
+        self.closed = False
+
+    async def set_content(self, *_args, **_kwargs):
+        raise RuntimeError("Target page, context or browser has been closed")
+
+    async def close(self):
+        self.closed = True
+
+
+class _FreshContext:
+    def __init__(self):
+        self.opened = 0
+
+    async def new_page(self):
+        self.opened += 1
+        return object()
+
+
+def test_a_crashed_page_is_replaced_instead_of_poisoning_the_pool():
+    from mathbot.render.pipeline import PlaywrightRenderer, RenderError, RenderJob
+
+    renderer = PlaywrightRenderer(load_settings({}).render, Path("unused"))
+    broken, context = _BrokenPage(), _FreshContext()
+
+    async def go():
+        renderer._context = context
+        renderer._pages = asyncio.Queue()
+        renderer._pages.put_nowait(broken)
+        with pytest.raises(RenderError, match="closed"):
+            await renderer.render(RenderJob(problem=None, document="<p>x</p>", uses_mathjax=False))
+        return renderer._pages.get_nowait()
+
+    replacement = asyncio.run(go())
+    assert broken.closed and context.opened == 1 and replacement is not broken
+
+
+def test_vendored_files_are_read_and_verified_once(tmp_path, monkeypatch):
+    from mathbot.render import vendor
+
+    item = vendor.VENDORED[1]
+    data = b"font bytes"
+    (tmp_path / item.path).parent.mkdir(parents=True)
+    (tmp_path / item.path).write_bytes(data)
+    monkeypatch.setattr(
+        vendor, "BY_PATH", {item.path: vendor.VendoredFile(item.path, item.url, vendor._sha256(data), "font/woff")}
+    )
+    reads = []
+    original = Path.read_bytes
+    monkeypatch.setattr(Path, "read_bytes", lambda self: reads.append(self) or original(self))
+    cache = vendor.AssetReader(tmp_path)
+    assert cache.read(item.path) == (data, "font/woff")
+    assert cache.read(item.path) == (data, "font/woff")
+    assert cache.read("not/pinned.js") is None
+    assert len(reads) == 1
+
+
+def test_an_unexpected_error_building_one_job_fails_only_that_problem(repo, tmp_path):
+    good, bad = add_problem(repo, number=1), add_problem(repo, number=2)
+    pipeline = RenderPipeline(repo, load_settings({}).render, tmp_path / "renders")
+    original = pipeline._job
+
+    def job(problem):
+        if problem.id == bad.id:
+            raise ValueError("malformed statement")
+        return original(problem)
+
+    pipeline._job = job
+    report = asyncio.run(pipeline.render([good, bad], FakeRenderer()))
+    assert (report.rendered, report.failed) == (1, 1)
+    assert "malformed statement" in report.errors[0][1]

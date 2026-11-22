@@ -40,7 +40,7 @@ from mathbot.render.aops_tex import formula_images, latex_images_to_tex
 from mathbot.render.assets import AssetCache, AssetError
 from mathbot.render.storage import Storage, StorageError
 from mathbot.render.template import READY_SCRIPT, build_document, needs_mathjax, renderer_version
-from mathbot.render.vendor import ASSET_ORIGIN, RenderAssetsMissing, read_asset, require_assets
+from mathbot.render.vendor import ASSET_ORIGIN, AssetReader, RenderAssetsMissing, require_assets
 
 log = logging.getLogger(__name__)
 
@@ -141,6 +141,7 @@ class PlaywrightRenderer:
     def __init__(self, settings: RenderSettings, assets_dir: Path) -> None:
         self.settings = settings
         self.assets_dir = assets_dir
+        self._files = AssetReader(assets_dir)
         self._playwright = None
         self._browser = None
         self._context = None
@@ -192,7 +193,7 @@ class PlaywrightRenderer:
     async def _route(self, route) -> None:
         url = route.request.url
         if url.startswith(ASSET_ORIGIN + "/"):
-            found = read_asset(self.assets_dir, url[len(ASSET_ORIGIN) + 1 :].split("?", 1)[0])
+            found = self._files.read(url[len(ASSET_ORIGIN) + 1 :].split("?", 1)[0])
             if found is not None:
                 body, content_type = found
                 await route.fulfill(status=200, body=body, content_type=content_type)
@@ -215,6 +216,9 @@ class PlaywrightRenderer:
             page = await self._replace_page(page)  # its script may still be running
             raise RenderError(f"page was not ready after {self.settings.timeout_ms} ms") from exc
         except Exception as exc:  # Playwright's errors, reported per problem
+            # The page may have crashed or been closed; returning it to the pool would fail
+            # every later render on it, so a fresh page takes its place.
+            page = await self._replace_page(page)
             raise RenderError(f"{type(exc).__name__}: {str(exc).splitlines()[0] if str(exc) else ''}") from exc
         finally:
             pages.put_nowait(page)
@@ -346,6 +350,10 @@ class RenderPipeline:
             job = self._job(problem)
         except AssetError as exc:
             self._fail(problem, f"asset: {exc}", 1, report)
+            return
+        except Exception as exc:  # unexpected markup: fail this problem, keep the run going
+            log.exception("could not build the render page", extra={"problem": problem.id})
+            self._fail(problem, f"could not build the page: {type(exc).__name__}: {exc}", 1, report)
             return
 
         attempts = self.settings.retries + 1
