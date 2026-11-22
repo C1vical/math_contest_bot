@@ -699,3 +699,27 @@ def test_an_unexpected_error_building_one_job_fails_only_that_problem(repo, tmp_
     report = asyncio.run(pipeline.render([good, bad], FakeRenderer()))
     assert (report.rendered, report.failed) == (1, 1)
     assert "malformed statement" in report.errors[0][1]
+
+
+def test_cleanup_reports_a_storage_failure_instead_of_crashing(tmp_path, monkeypatch, capsys):
+    import argparse
+
+    from mathbot.cli import images as cli_images
+    from mathbot.render import storage as storage_module
+
+    env = {"DATA_DIR": str(tmp_path), "STORAGE_BACKEND": "s3", "S3_BUCKET": "b"}
+    settings = load_settings({**env, "S3_ACCESS_KEY_ID": "k", "S3_SECRET_ACCESS_KEY": "s"})
+    with settings_repo(settings) as repo:
+        old = add_problem(repo)
+        pipeline = RenderPipeline(repo, settings.render, settings.renders_dir)
+        asyncio.run(pipeline.render([old], FakeRenderer()))
+        pipeline.upload(LocalStorage(tmp_path / "bucket"))
+        add_problem(repo, html="<p>A corrected statement of the problem.</p>")  # the old render is now stale
+
+    class Unreachable(LocalStorage):
+        def delete(self, key):
+            raise StorageError("bucket unreachable")
+
+    monkeypatch.setattr(storage_module, "build_storage", lambda _settings: Unreachable(tmp_path / "bucket"))
+    assert cli_images.cmd_cleanup(argparse.Namespace(dry_run=False, remote=True), settings) == 1
+    assert "bucket unreachable" in capsys.readouterr().err

@@ -159,12 +159,16 @@ def cmd_upload(args: argparse.Namespace, settings: Settings) -> int:
 
 
 def cmd_cleanup(args: argparse.Namespace, settings: Settings) -> int:
-    from mathbot.render.storage import build_storage
+    from mathbot.render.storage import StorageError, build_storage
 
     repo = common.repo(settings, common.registry(settings))
-    # Local renders have no remote copy: deleting the local file is all there is to do.
-    storage = build_storage(settings) if args.remote and settings.storage.backend != "local" else None
-    counts = common.render_pipeline(settings, repo).cleanup(storage, dry_run=args.dry_run)
+    try:
+        # Local renders have no remote copy: deleting the local file is all there is to do.
+        storage = build_storage(settings) if args.remote and settings.storage.backend != "local" else None
+        counts = common.render_pipeline(settings, repo).cleanup(storage, dry_run=args.dry_run)
+    except StorageError as exc:  # records already cleaned stay cleaned; run again to finish
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     prefix = "would remove" if args.dry_run else "removed"
     print(f"{prefix}: " + ", ".join(f"{value} {name.replace('_', ' ')}" for name, value in counts.items()))
     return 0
