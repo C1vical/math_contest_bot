@@ -225,3 +225,30 @@ def test_help_lists_commands_and_the_buttons_topic_within_embed_limits(bot):
     detail = FakeInteraction(interaction.client)
     run(General.help.callback(General(interaction.client), detail, "buttons"))
     assert detail.response.messages[0]["embed"].title.startswith("Buttons")
+
+
+def test_every_command_fits_discord_limits(tmp_path, registry):
+    from mathbot.bot.app import MathBot
+    from mathbot.bot.health import HealthState
+
+    settings = load_settings({"DATA_DIR": str(tmp_path), "SYNC_COMMANDS": "false"})
+
+    async def payloads():
+        bot = MathBot(settings, registry, HealthState())
+        await bot.setup_hook()
+        data = [command.to_dict(bot.tree) for command in bot.tree.get_commands()]
+        await bot.close()
+        return data
+
+    def check(command):
+        assert 1 <= len(command["description"]) <= 100, command["name"]
+        options = command.get("options", [])
+        assert len(options) <= 25
+        for option in options:
+            assert len(option["description"]) <= 100, (command["name"], option["name"])
+            assert all(len(choice["name"]) <= 100 for choice in option.get("choices", []))
+            if option["type"] in (1, 2):  # subcommand / group
+                check(option)
+
+    for command in run(payloads()):
+        check(command)
