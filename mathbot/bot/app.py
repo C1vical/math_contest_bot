@@ -9,6 +9,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from mathbot.bot import ui
 from mathbot.bot.health import HealthServer, HealthState
 from mathbot.bot.images import ImageService
 from mathbot.bot.policy import NotAdmin, NotAllowedHere
@@ -18,6 +19,8 @@ from mathbot.contests import ContestRegistry
 from mathbot.db import Repository, open_database
 
 log = logging.getLogger(__name__)
+
+MAX_ECHO_CHARS = 80  # user input repeated back in an error message
 
 COGS = (
     "mathbot.bot.cogs.problems",
@@ -94,11 +97,12 @@ class MathBot(commands.Bot):
         elif isinstance(error, NotAdmin):
             message = "That command is for bot administrators only."
         elif isinstance(error, app_commands.CommandOnCooldown):
-            message = f"Slow down - try again in {error.retry_after:.0f}s."
+            message = f"Slow down - try again in {ui.seconds(error.retry_after)}."
         elif isinstance(error, app_commands.CheckFailure):
             message = "You can't use that command here."
         elif isinstance(error, app_commands.TransformerError):
-            message = f"I couldn't understand `{error.value}` for that option."
+            value = discord.utils.escape_markdown(str(error.value))[:MAX_ECHO_CHARS]
+            message = f"I couldn't understand `{value}` for that option."
         else:
             reference = uuid.uuid4().hex[:8]
             original = getattr(error, "original", error)

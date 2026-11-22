@@ -18,19 +18,42 @@ HELP: dict[str, tuple[str, str]] = {
     "problem": (
         "Show a specific problem",
         "`/problem contest:AMC10A year:2024 number:5`\n"
-        "Contest names are case-insensitive and accept aliases (`aime i`, `AMC 10A`). "
+        "or everything in one box: `/problem contest:AMC 10A 2024 #5` "
+        "(also `2024 AIME I P5`, `amc10a-2024-p05`).\n"
+        "Contest names ignore case, spaces and punctuation and accept aliases (`aime i`, `Fall 10A`). "
         "Start typing to pick from the list.",
     ),
     "random": (
         "Show a random problem",
-        "`/random` with any of `contest`, `year`, `number`, `source`.\n"
-        "`contest` also accepts a family such as `PCF`, `FGH`, `AMC` or `AIME`.",
+        "`/random` with any of: `contest` (a contest, a family such as `PCF`, `AMC`, `AIME`, or a source "
+        "such as `cemc`), `year`, `year_from` / `year_to`, `number`, `difficulty`, `source`.\n"
+        "`difficulty` is the problem's place in its paper (contests put easier problems first; for "
+        "two-day olympiads, its place in the day). Problems shown recently in the channel are skipped.\n"
+        "Example: `/random contest:AMC year_from:2015 difficulty:Hard`",
+    ),
+    "buttons": (
+        "The buttons under a problem",
+        "**Show answer**: only you see it, as a spoiler.\n"
+        "**Previous / Next**: the neighbouring problems of the same contest and year.\n"
+        "**Another random**: the same `/random` filters again (under `/problem`: another problem "
+        "from that contest).\n"
+        "**Source / Official solution**: the original pages.",
     ),
     "contests": ("List all contests", "Shows every contest with the years and number of problems loaded."),
     "contest": ("Details for one contest", "`/contest contest:Euclid` - years available, format and aliases."),
     "stats": ("Database statistics", "Totals by source and the largest contests."),
+    "admin": (
+        "Maintenance (admins only)",
+        "`/admin status` - database checks, missing images and the last ingestion run.\n"
+        "`/admin sync` - register the slash commands with Discord again.",
+    ),
     "help": ("This menu", "`/help` or `/help command:random`"),
 }
+TOPICS = {"buttons"}  # help entries that are not slash commands
+
+
+def _label(name: str) -> str:
+    return name.capitalize() if name in TOPICS else f"/{name}"
 
 
 class General(commands.Cog):
@@ -39,10 +62,11 @@ class General(commands.Cog):
 
     async def command_autocomplete(self, interaction: discord.Interaction, current: str):
         needle = current.lower().lstrip("/")
-        return [app_commands.Choice(name=f"/{name}", value=name) for name in HELP if needle in name][: ui.MAX_CHOICES]
+        matches = [app_commands.Choice(name=_label(name), value=name) for name in HELP if needle in name]
+        return matches[: ui.MAX_CHOICES]
 
     @app_commands.command(name="help", description="How to use the bot")
-    @app_commands.describe(command="Show details for one command")
+    @app_commands.describe(command="Show details for one command (or 'buttons')")
     @app_commands.autocomplete(command=command_autocomplete)
     @allowed_here()
     async def help(self, interaction: discord.Interaction, command: Optional[str] = None) -> None:
@@ -50,12 +74,12 @@ class General(commands.Cog):
             embed = discord.Embed(
                 title="Math Contest Bot",
                 description="Problems from AMC, AIME, USA(J)MO, IMO, CMO and the CEMC contests.\n"
-                "Use `/help command:<name>` for details.",
+                "Use `/help command:<name>` for details, e.g. `/help command:buttons`.",
                 color=ui.COLOR,
             )
             embed.add_field(
                 name="Commands",
-                value="\n".join(f"`/{name}` - {summary}" for name, (summary, _) in HELP.items()),
+                value="\n".join(f"`{_label(name)}` - {summary}" for name, (summary, _) in HELP.items()),
                 inline=False,
             )
             await interaction.response.send_message(embed=embed)
@@ -69,7 +93,7 @@ class General(commands.Cog):
             return
         summary, details = HELP[name]
         await interaction.response.send_message(
-            embed=discord.Embed(title=f"/{name} - {summary}", description=details, color=ui.COLOR)
+            embed=discord.Embed(title=f"{_label(name)} - {summary}", description=details, color=ui.COLOR)
         )
 
 

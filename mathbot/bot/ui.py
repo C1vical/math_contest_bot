@@ -9,15 +9,22 @@ import io
 import discord
 from discord import app_commands
 
+from mathbot.bot.query import RandomFilters
 from mathbot.contests import FAMILY_NAMES, PROVIDER_NAMES, ContestRegistry, normalize_alias
 from mathbot.db.repo import ProblemRow
 
 COLOR = discord.Color.blue()
 ERROR_COLOR = discord.Color.red()
 ANSWER_PREFIX = "mathbot:answer:"
+NAV_PREFIX = "mathbot:nav:"  # mathbot:nav:<+1|-1>:<problem id>
 MAX_CHOICES = 25  # Discord's autocomplete limit
 MAX_LABEL_CHARS = 100  # Discord's limit for an autocomplete entry's name
 MAX_STATEMENT_CHARS = 3900  # text fallback, under Discord's 4096-character embed description limit
+
+
+def seconds(value: float) -> str:
+    """A wait for humans: ``0.4s``, ``3s`` (never "0s")."""
+    return f"{value:.1f}s" if value < 10 else f"{value:.0f}s"
 
 
 def error_embed(title: str, description: str) -> discord.Embed:
@@ -88,21 +95,62 @@ def problem_embed(problem: ProblemRow, *, has_image: bool) -> discord.Embed:
     return embed
 
 
-def problem_view(problem: ProblemRow) -> discord.ui.View:
-    """Source link plus, when an answer is stored, a button revealing it privately.
+def nav_custom_id(problem_id: str, step: int) -> str:
+    return f"{NAV_PREFIX}{step:+d}:{problem_id}"
 
-    The answer button carries the problem id in its ``custom_id`` and is handled
-    by a listener, so it keeps working after a bot restart.
+
+def parse_nav_custom_id(custom_id: str) -> tuple[str, int] | None:
+    """``(problem id, step)`` from a Previous / Next button, or None if malformed."""
+    if not custom_id.startswith(NAV_PREFIX):
+        return None
+    step, _, problem_id = custom_id[len(NAV_PREFIX) :].partition(":")
+    if step not in {"+1", "-1"} or not problem_id:
+        return None
+    return problem_id, int(step)
+
+
+def problem_view(
+    problem: ProblemRow,
+    *,
+    has_previous: bool = False,
+    has_next: bool = False,
+    again: RandomFilters | None = None,
+) -> discord.ui.View:
+    """Links and buttons under a problem.
+
+    Row 1: source and official-solution links, and "Show answer" (private) when an
+    answer is stored. Row 2: Previous / Next problem of the same sitting, and
+    "Another random" repeating ``again`` (the filters of the /random call, or this
+    problem's contest). Every button's ``custom_id`` carries what it needs and is
+    handled by a listener, so the buttons keep working after a bot restart.
     """
     view = discord.ui.View(timeout=None)
-    view.add_item(discord.ui.Button(label="Source", url=problem.source_url))
+    view.add_item(discord.ui.Button(label="Source", url=problem.source_url, row=0))
     if problem.solution_url:
-        view.add_item(discord.ui.Button(label="Official solution", url=problem.solution_url))
+        view.add_item(discord.ui.Button(label="Official solution", url=problem.solution_url, row=0))
     if problem.answer:
         view.add_item(
             discord.ui.Button(
-                label="Show answer", style=discord.ButtonStyle.secondary, custom_id=f"{ANSWER_PREFIX}{problem.id}"
+                label="Show answer",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"{ANSWER_PREFIX}{problem.id}",
+                row=0,
             )
+        )
+    for label, step, enabled in (("Previous", -1, has_previous), ("Next", +1, has_next)):
+        view.add_item(
+            discord.ui.Button(
+                label=label,
+                style=discord.ButtonStyle.secondary,
+                custom_id=nav_custom_id(problem.id, step),
+                disabled=not enabled,
+                row=1,
+            )
+        )
+    random_id = (again or RandomFilters(contest=problem.series_key)).custom_id()
+    if random_id is not None:
+        view.add_item(
+            discord.ui.Button(label="Another random", style=discord.ButtonStyle.primary, custom_id=random_id, row=1)
         )
     return view
 

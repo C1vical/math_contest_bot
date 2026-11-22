@@ -95,8 +95,8 @@ def test_answer_button_only_when_an_answer_exists(repo):
         return [i.label for i in plain.children], [(i.label, i.custom_id) for i in answered.children]
 
     plain, answered = asyncio.run(build())
-    assert plain == ["Source"]
-    assert answered == [("Source", None), ("Show answer", f"{ui.ANSWER_PREFIX}{problem.id}")]
+    assert "Show answer" not in plain
+    assert ("Show answer", f"{ui.ANSWER_PREFIX}{problem.id}") in answered
 
 
 def test_long_contest_lists_are_paginated_within_embed_limits():
