@@ -210,7 +210,11 @@ class PlaywrightRenderer:
             await page.set_content(job.document, wait_until="load")
             # page.evaluate has no timeout of its own: without this, a page whose MathJax or
             # images never settle would hang the whole run.
-            await asyncio.wait_for(page.evaluate(READY_SCRIPT, job.uses_mathjax), self.settings.timeout_ms / 1000)
+            scaled = await asyncio.wait_for(
+                page.evaluate(READY_SCRIPT, job.uses_mathjax), self.settings.timeout_ms / 1000
+            )
+            if scaled:
+                log.info("shrank over-wide content to fit", extra={"problem": job.problem.id, "blocks": scaled})
             return await page.locator("body").screenshot(type="png", animations="disabled")
         except asyncio.TimeoutError as exc:
             page = await self._replace_page(page)  # its script may still be running

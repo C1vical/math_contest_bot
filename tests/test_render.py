@@ -723,3 +723,24 @@ def test_cleanup_reports_a_storage_failure_instead_of_crashing(tmp_path, monkeyp
     monkeypatch.setattr(storage_module, "build_storage", lambda _settings: Unreachable(tmp_path / "bucket"))
     assert cli_images.cmd_cleanup(argparse.Namespace(dry_run=False, remote=True), settings) == 1
     assert "bucket unreachable" in capsys.readouterr().err
+
+
+@pytest.mark.browser
+def test_real_chromium_shrinks_over_wide_content_instead_of_cutting_it_off(repo, tmp_path, chromium_assets_dir):
+    """A block wider than the page (like a long display equation, it cannot wrap) must be
+    scaled into the picture: the red marker at its right end has to be in the PNG."""
+    from PIL import Image
+
+    wide = add_problem(
+        repo,
+        html='<p>Use the figure below.</p><div style="width:1660px">'
+        '<div style="margin-left:1600px;width:60px;height:60px;background:#ff0000"></div></div>',
+    )
+    settings = RenderSettings(concurrency=1, retries=0)
+    pipeline = RenderPipeline(repo, settings, tmp_path / "renders")
+    report = render_in_chromium(pipeline, settings, chromium_assets_dir, [wide])
+    assert report.rendered == 1, report.errors
+    image = Image.open(tmp_path / "renders" / repo.current_render(wide.id)["local_path"]).convert("RGB")
+    assert image.width == settings.viewport_width * settings.device_scale_factor
+    red = sum(1 for r, g, b in image.getdata() if r > 200 and g < 60 and b < 60)
+    assert red > 100  # the marker cell survived (it used to fall outside the screenshot)
