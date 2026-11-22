@@ -148,6 +148,12 @@ def _html_link(cell: Tag | None) -> str | None:
     return None
 
 
+def _sibling_solution_url(contest_url: str) -> str | None:
+    """``.../2020PascalContest.html`` -> ``.../2020PascalSolution.html`` (None for other names)."""
+    head, sep, tail = contest_url.rpartition("Contest.html")
+    return f"{head}Solution.html{tail}" if sep and not tail else None
+
+
 def _abs(href: str | None) -> str | None:
     return urljoin(BASE_URL, href) if href else None
 
@@ -393,6 +399,10 @@ class CemcAdapter:
                     source_identifier=url.rsplit("/", 1)[-1],
                     expected_problems=series.expected_problems(year),
                     origin="fallback",
+                    # The manifest has only contest URLs; the solutions page sits beside the
+                    # contest page (2020 Pascal is served this way but missing from the listing).
+                    # If it is not there, that is a warning, not a failed edition.
+                    extra={"solution_url": _sibling_solution_url(url)},
                 )
         return [editions[year] for year in sorted(editions)]
 

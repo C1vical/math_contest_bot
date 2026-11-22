@@ -239,7 +239,9 @@ def test_wrong_declared_count_on_page_is_tolerated_when_registry_agrees(registry
     adapter = CemcAdapter(FixtureClient(cemc_route))
     edition = next(e for e in adapter.discover(series) if e.year == 2016)
     result = adapter.fetch_edition(series, edition)
-    assert [p.number for p in result.problems] == [1, 2, 3, 4] and not result.failures
+    assert [p.number for p in result.problems] == [1, 2, 3, 4]
+    # The fixtures have no solutions page for it: a warning, never a failed edition.
+    assert all(f.warning and "solutions unavailable" in f.error for f in result.failures)
 
 
 def test_count_mismatch_rejects_the_whole_edition(registry):
@@ -356,3 +358,28 @@ def test_numeric_part_c_answers_written_as_tex():
         "</ol></body></html>"
     )
     assert parse_answers(page) == {1: "11", 2: "-86", 3: "2023"}
+
+
+def test_editions_from_the_seed_manifest_still_get_their_solutions_and_answers(registry):
+    """Pascal 2020 is missing from the live listing, so it comes from the seed manifest,
+    which holds only the contest URL. Its solutions page sits next to it
+    (.../2020PascalContest.html -> .../2020PascalSolution.html) and must still be read."""
+    series = registry.get("PASCAL")
+    contest = f"{DOCS}/2026/2019PascalContest.html"  # the manifest's URL for 2019
+    solution = f"{DOCS}/2026/2019PascalSolution.html"
+
+    def route(url, params):
+        if url == LISTING_URL:
+            return "<html><body><table><tbody></tbody></table></body></html>"  # listing omits it
+        if url == contest:
+            return read_fixture("cemc", "2019PascalContest.html")
+        if url == solution:
+            return read_fixture("cemc", "2019PascalSolution.html")
+        return None
+
+    adapter = CemcAdapter(FixtureClient(route))
+    edition = {e.year: e for e in adapter.discover(series)}[2019]
+    assert edition.origin == "fallback" and edition.extra["solution_url"] == solution
+    result = adapter.fetch_edition(series, edition)
+    assert result.failures == [] and len(result.problems) == 25
+    assert result.problems[0].answer == "D" and result.problems[0].solution_html
