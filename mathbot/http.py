@@ -16,6 +16,7 @@ of an error.
 
 from __future__ import annotations
 
+import codecs
 import hashlib
 import json
 import logging
@@ -36,6 +37,13 @@ from mathbot.config import HttpSettings
 log = logging.getLogger(__name__)
 
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+# Network-level failures worth retrying; any other requests exception fails at once.
+RETRY_EXCEPTIONS = (
+    requests.ConnectionError,
+    requests.Timeout,
+    requests.exceptions.ChunkedEncodingError,
+    requests.exceptions.ContentDecodingError,
+)
 MAX_RETRY_AFTER = 300.0
 
 
@@ -88,10 +96,15 @@ class Response:
 
 
 def _charset(content_type: str) -> str:
+    """The declared charset if Python knows it, else UTF-8 (``charset=utf8mb4`` is seen in the wild)."""
     for part in content_type.split(";"):
         part = part.strip().lower()
         if part.startswith("charset="):
-            return part.split("=", 1)[1].strip("\"'") or "utf-8"
+            label = part.split("=", 1)[1].strip("\"'")
+            try:
+                return codecs.lookup(label).name
+            except LookupError:
+                return "utf-8"
     return "utf-8"
 
 
@@ -246,6 +259,13 @@ def is_challenge(status: int, headers: Mapping[str, str], body: bytes) -> bool:
     return False
 
 
+def _with_query(url: str, params: Mapping[str, object] | None) -> str:
+    """``url`` with ``params`` appended in the order given, as the request will send them."""
+    if not params:
+        return url
+    return f"{url}{'&' if '?' in url else '?'}{urlencode([(k, str(v)) for k, v in params.items()])}"
+
+
 def cache_key(url: str, params: Mapping[str, object] | None) -> str:
     """The URL with its query parameters in a stable order: the key for caching and logging."""
     if not params:
@@ -298,7 +318,7 @@ class PoliteClient:
             meta, body = cached
             return Response(meta["url"], meta["status"], meta["headers"], body, from_cache=True)
 
-        self._check_robots(url)
+        self._check_robots(_with_query(url, params))
 
         conditional: dict[str, str] = {}
         if cached:
@@ -354,9 +374,11 @@ class PoliteClient:
             self._throttle(host)
             try:
                 raw = self._session.get(url, params=params, headers=headers, timeout=self.settings.timeout)
-            except (requests.ConnectionError, requests.Timeout) as exc:
+            except RETRY_EXCEPTIONS as exc:
                 last_error = TransportError(f"{type(exc).__name__}: {exc}", url=url)
                 retry_after = None
+            except requests.RequestException as exc:  # e.g. an invalid URL: retrying cannot help
+                raise TransportError(f"{type(exc).__name__}: {exc}", url=url) from exc
             else:
                 status, content = raw.status_code, raw.content
                 if is_challenge(status, raw.headers, content):

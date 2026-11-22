@@ -227,3 +227,36 @@ def test_atomic_write_retries_while_another_process_holds_the_file(tmp_path, mon
         http.atomic_write_bytes(tmp_path / "b.png", b"data")
     assert len(calls) == http.REPLACE_ATTEMPTS
     assert [p.name for p in tmp_path.iterdir()] == ["a.png"]  # no temp file left behind
+
+
+def test_robots_rules_apply_to_query_parameters_passed_separately():
+    """The MediaWiki API and the CEMC listing pass their query as ``params``; a robots.txt
+    rule on the query string must still be honoured."""
+    client, session, _ = make_client([FakeResponse()], robots="User-agent: *\nDisallow: /*?action=\n")
+    with pytest.raises(RobotsDisallowedError):
+        client.get("https://example.org/w/api.php", {"action": "parse", "page": "X"})
+    assert session.requests == []
+    client.get("https://example.org/w/api.php", {"page": "X"})  # no action=: allowed
+    assert len(session.requests) == 1
+
+
+@pytest.mark.parametrize(
+    "error, retried",
+    [
+        (requests.exceptions.ChunkedEncodingError("connection broken"), True),
+        (requests.exceptions.ContentDecodingError("bad gzip"), True),
+        (requests.exceptions.InvalidURL("bad url"), False),
+    ],
+)
+def test_every_requests_failure_becomes_a_typed_error(error, retried):
+    client, session, _ = make_client([error] * 4)
+    with pytest.raises(TransportError):
+        client.get("https://example.org/page")
+    assert len(session.requests) == (4 if retried else 1)
+
+
+def test_unknown_charset_label_falls_back_to_utf8():
+    from mathbot.http import Response
+
+    response = Response("https://example.org", 200, {"content-type": "text/html; charset=utf8mb4"}, "é".encode())
+    assert response.text == "é"
