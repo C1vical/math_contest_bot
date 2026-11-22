@@ -298,3 +298,32 @@ def test_official_solution_link_appears_when_stored(repo):
         return [(i.label, i.url) for i in ui.problem_view(problem, owner_id=1).children]
 
     assert ("Solution", "https://cemc.uwaterloo.ca/solutions.html") in asyncio.run(build())
+
+
+def test_a_truncated_png_is_rejected():
+    png = make_png()
+    with pytest.raises(ImageFetchError, match="incomplete"):
+        validate_image_response(200, "image/png", png[: len(png) // 2])
+
+
+class _ChunkedStream:
+    """aiohttp's StreamReader as far as the image fetch uses it: data arrives in pieces."""
+
+    def __init__(self, data: bytes, size: int = 1000):
+        self.chunks = [data[i : i + size] for i in range(0, len(data), size)]
+
+    async def read(self, _n=-1):  # what the old code called: returns only what has arrived
+        return self.chunks[0] if self.chunks else b""
+
+    async def iter_chunked(self, _size):
+        for chunk in self.chunks:
+            yield chunk
+
+
+def test_remote_images_are_read_to_the_end_not_just_the_first_chunk():
+    from mathbot.bot.images import read_body
+
+    png = make_png(800, 600)
+    assert asyncio.run(read_body(_ChunkedStream(png), limit=len(png))) == png
+    with pytest.raises(ImageFetchError, match="too large"):
+        asyncio.run(read_body(_ChunkedStream(png), limit=len(png) - 1))

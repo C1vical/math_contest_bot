@@ -28,6 +28,7 @@ from mathbot.render import PNG_SIGNATURE
 log = logging.getLogger(__name__)
 
 MAX_IMAGE_BYTES = 8 * 1024 * 1024  # stays under Discord's default upload limit
+PNG_END = b"IEND\xaeB`\x82"  # every complete PNG ends with this IEND chunk
 FETCH_TIMEOUT = aiohttp.ClientTimeout(total=15, connect=5)
 CACHE_ENTRIES = 64
 
@@ -46,6 +47,22 @@ def validate_image_response(status: int, content_type: str, data: bytes) -> None
         raise ImageFetchError(f"image too large ({len(data)} bytes)")
     if not data.startswith(PNG_SIGNATURE):
         raise ImageFetchError("body is not a PNG")
+    if not data.endswith(PNG_END):
+        raise ImageFetchError(f"PNG is incomplete ({len(data)} bytes, no end marker)")
+
+
+async def read_body(content, limit: int) -> bytes:
+    """The whole response body, refusing more than ``limit`` bytes.
+
+    ``StreamReader.read(n)`` returns only what has arrived so far (often one network
+    chunk), which used to cut images off after a few kilobytes.
+    """
+    body = bytearray()
+    async for chunk in content.iter_chunked(64 * 1024):
+        body.extend(chunk)
+        if len(body) > limit:
+            raise ImageFetchError(f"image too large (over {limit} bytes)")
+    return bytes(body)
 
 
 class ImageService:
@@ -73,7 +90,9 @@ class ImageService:
             self._session = aiohttp.ClientSession(timeout=FETCH_TIMEOUT)
         try:
             async with self._session.get(url) as response:
-                data = await response.content.read(MAX_IMAGE_BYTES + 1)
+                if response.status != 200:
+                    raise ImageFetchError(f"HTTP {response.status}")
+                data = await read_body(response.content, MAX_IMAGE_BYTES)
                 validate_image_response(response.status, response.headers.get("Content-Type", ""), data)
                 return data
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
@@ -109,4 +128,5 @@ def _read_png(path: Path) -> bytes | None:
         data = path.read_bytes()
     except OSError:
         return None
-    return data if data.startswith(PNG_SIGNATURE) and len(data) <= MAX_IMAGE_BYTES else None
+    complete = data.startswith(PNG_SIGNATURE) and data.endswith(PNG_END)
+    return data if complete and len(data) <= MAX_IMAGE_BYTES else None
