@@ -11,7 +11,7 @@ and credentials come only from configuration.
 
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Protocol
 
 from mathbot.config import Settings, StorageSettings
@@ -38,10 +38,13 @@ class LocalStorage:
         self.root = root
 
     def _path(self, key: str) -> Path:
-        path = (self.root / key).resolve()
-        if self.root.resolve() not in path.parents:
+        # Checked on the key itself, not with Path.resolve(): on Windows resolve() can
+        # return a "\\?\C:\..." path while another thread creates the same directory,
+        # which made parallel uploads report valid keys as escaping the root.
+        parts = PurePosixPath(key.replace("\\", "/")).parts
+        if not parts or key.startswith(("/", "\\")) or ":" in key or any(p in {"..", "."} for p in parts):
             raise StorageError(f"key escapes the storage root: {key!r}")
-        return path
+        return self.root.joinpath(*parts)
 
     def put(self, key: str, data: bytes, content_type: str, *, cache_control: str | None = None) -> None:
         atomic_write_bytes(self._path(key), data)
@@ -60,6 +63,7 @@ class S3Storage:
         self.settings = settings
         if client is None:
             import boto3  # imported lazily: only needed when S3 storage is selected
+            from botocore.config import Config
 
             client = boto3.client(
                 "s3",
@@ -67,6 +71,9 @@ class S3Storage:
                 region_name=settings.region,
                 aws_access_key_id=settings.access_key_id,
                 aws_secret_access_key=settings.secret_access_key,
+                # One connection per parallel upload (the default pool holds 10), and
+                # botocore's standard retries for throttling / transient errors.
+                config=Config(max_pool_connections=32, retries={"max_attempts": 5, "mode": "standard"}),
             )
         self._client = client
 

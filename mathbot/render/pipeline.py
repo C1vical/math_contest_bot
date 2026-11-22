@@ -27,6 +27,7 @@ import contextlib
 import io
 import logging
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -49,6 +50,8 @@ VIEWPORT_HEIGHT = 800  # the screenshot is of <body>, so this only sets the init
 MAX_REPORTED_ERRORS = 40  # failures listed in a report; the rest are in the renders table
 PROGRESS_EVERY_RENDERS = 25
 PROGRESS_EVERY_PREFETCHES = 250
+PROGRESS_EVERY_UPLOADS = 250
+UPLOAD_WORKERS = 16  # parallel PUTs to object storage (each is latency-bound)
 
 
 class RenderError(Exception):
@@ -405,24 +408,40 @@ class RenderPipeline:
         """
         rows = [r for r in self.repo.current_renders(self.version, pending_only=not force) if r["object_key"]]
         report = UploadReport(pending=len(rows))
-        for row in rows:
-            key = row["object_key"]
+
+        def publish(row) -> None:
             path = self.renders_dir / row["local_path"]
-            try:
-                if storage is None:
-                    if not path.is_file():
-                        raise OSError(f"render file is missing: {path}")
+            if storage is None:
+                if not path.is_file():
+                    raise OSError(f"render file is missing: {path}")
+                return
+            data = path.read_bytes()
+            validate_png(data)
+            storage.put(row["object_key"], data, "image/png")
+
+        # Each PUT waits on a network round trip, so several run at once. Only this thread
+        # touches the database, and every success is recorded at once, so an interrupted
+        # upload resumes where it stopped.
+        pool = ThreadPoolExecutor(max_workers=1 if storage is None else UPLOAD_WORKERS, thread_name_prefix="upload")
+        try:
+            futures = {pool.submit(publish, row): row for row in rows}
+            for done, future in enumerate(as_completed(futures), start=1):
+                row = futures[future]
+                try:
+                    future.result()
+                except (OSError, RenderError, StorageError) as exc:
+                    report.failed += 1
+                    report.errors.append((row["object_key"], str(exc)))
+                    log.error("upload failed", extra={"key": row["object_key"], "error": str(exc)})
                 else:
-                    data = path.read_bytes()
-                    validate_png(data)
-                    storage.put(key, data, "image/png")
-            except (OSError, RenderError, StorageError) as exc:
-                report.failed += 1
-                report.errors.append((key, str(exc)))
-                log.error("upload failed", extra={"key": key, "error": str(exc)})
-                continue
-            self.repo.mark_uploaded(row["id"])
-            report.uploaded += 1
+                    self.repo.mark_uploaded(row["id"])
+                    report.uploaded += 1
+                if done % PROGRESS_EVERY_UPLOADS == 0:
+                    self.progress(f"uploaded {report.uploaded}/{report.pending} ({report.failed} failed)")
+        except BaseException:
+            pool.shutdown(wait=False, cancel_futures=True)  # Ctrl+C: don't wait for the queue
+            raise
+        pool.shutdown(wait=True)
         return report
 
     def cleanup(self, storage: Storage | None = None, *, dry_run: bool = False) -> dict[str, int]:

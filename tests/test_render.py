@@ -744,3 +744,38 @@ def test_real_chromium_shrinks_over_wide_content_instead_of_cutting_it_off(repo,
     assert image.width == settings.viewport_width * settings.device_scale_factor
     red = sum(1 for r, g, b in image.getdata() if r > 200 and g < 60 and b < 60)
     assert red > 100  # the marker cell survived (it used to fall outside the screenshot)
+
+
+def test_uploads_run_in_parallel_and_each_is_recorded(repo, tmp_path):
+    """Object storage is latency-bound (about 0.5 s per PUT to R2), so uploads overlap."""
+    import threading
+    import time
+
+    problems = [add_problem(repo, n, f"<p>Problem number {n} of the parallel test.</p>") for n in range(1, 13)]
+    pipeline = RenderPipeline(repo, load_settings({}).render, tmp_path / "renders")
+    asyncio.run(pipeline.render(problems, FakeRenderer()))
+
+    class SlowStorage(LocalStorage):
+        def __init__(self, root):
+            super().__init__(root)
+            self.active = self.peak = 0
+            self.lock = threading.Lock()
+
+        def put(self, key, data, content_type, *, cache_control=None):
+            with self.lock:
+                self.active += 1
+                self.peak = max(self.peak, self.active)
+            time.sleep(0.05)
+            if key.endswith(problems[3].content_hash[:12] + f"-r{pipeline.version}.png"):
+                with self.lock:
+                    self.active -= 1
+                raise StorageError("bucket hiccup")
+            super().put(key, data, content_type)
+            with self.lock:
+                self.active -= 1
+
+    storage = SlowStorage(tmp_path / "bucket")
+    report = pipeline.upload(storage)
+    assert (report.uploaded, report.failed) == (11, 1) and storage.peak > 1
+    pending = repo.current_renders(pipeline.version, pending_only=True)
+    assert [r["problem_id"] for r in pending] == [problems[3].id]  # only the failed one is retried
