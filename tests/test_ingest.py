@@ -254,3 +254,29 @@ def test_ctrl_c_stops_fetching_the_editions_still_queued(repo, registry):
         ingestor.run([registry.get("IMO")])
     assert len(adapter.fetched) <= 2  # the edition stored, plus at most the one already in flight
     assert repo.last_run()["status"] == "failed"
+
+
+def test_build_adapters_constructs_every_provider():
+    from mathbot.sources import build_adapters
+
+    adapters = build_adapters(FixtureClient(lambda url, params: None), refresh=True)
+    assert set(adapters) == {CEMC, AOPS_WIKI, AOPS_COMMUNITY}
+    assert all(adapter.provider == provider for provider, adapter in adapters.items())
+
+
+class CrashingAdapter(StubAdapter):
+    """An adapter whose parser hits markup it does not expect for one edition."""
+
+    def fetch_edition(self, series, edition, *, known=None, only_numbers=None):
+        if edition.year == 2019:
+            raise KeyError("to")
+        return super().fetch_edition(series, edition, known=known, only_numbers=only_numbers)
+
+
+def test_unexpected_parser_exception_fails_one_edition_not_the_run(repo, registry):
+    adapter = CrashingAdapter({2019: {1: "<p>Problem of 2019.</p>"}, 2020: {1: "<p>Problem of 2020.</p>"}})
+    report = Ingestor(repo, {AOPS_WIKI: adapter}, concurrency=1).run([registry.get("IMO")])
+    assert report.status == "completed_with_errors"
+    assert repo.years_for("IMO") == [2020]
+    assert [(e.year, e.stage) for e in report.errors] == [(2019, "parse")]
+    assert "KeyError" in report.errors[0].error

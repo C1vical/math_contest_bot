@@ -294,6 +294,12 @@ class Ingestor:
                     report.editions["failed"] += 1
                     self._error(report, series, ref.year, ProblemFailure(None, exc.url, "fetch", str(exc)))
                     continue
+                except Exception as exc:  # a parser met markup it does not expect: fail this edition only
+                    log.exception("adapter crashed", extra={"contest": series.key, "year": ref.year})
+                    report.editions["failed"] += 1
+                    failure = ProblemFailure(None, ref.source_url, "parse", f"{type(exc).__name__}: {exc}", True)
+                    self._error(report, series, ref.year, failure)
+                    continue
                 self._store(series, result, dry_run, partial, report)
         except BaseException:
             # Ctrl+C or an unexpected error: drop the editions not started yet. (Leaving the
