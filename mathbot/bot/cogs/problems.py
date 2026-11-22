@@ -74,7 +74,9 @@ class Problems(commands.Cog):
         )
         image = await self.bot.images.get(problem)
         embed = ui.problem_embed(problem, has_image=image is not None)
-        view = ui.problem_view(problem, has_previous=has_previous, has_next=has_next, again=again)
+        view = ui.problem_view(
+            problem, owner_id=interaction.user.id, has_previous=has_previous, has_next=has_next, again=again
+        )
         self._remember(interaction, problem)
         if image is not None:
             await interaction.followup.send(embed=embed, file=ui.problem_file(image), view=view)
@@ -278,6 +280,15 @@ class Problems(commands.Cog):
         if nav is None and filters is None:
             return  # not ours (e.g. the contest list's pagination buttons)
 
+        owner = nav[2] if nav is not None else filters.owner  # type: ignore[union-attr]
+        if owner is not None and interaction.user.id != owner:
+            await interaction.response.send_message(
+                f"Only <@{owner}> can use these buttons. Run `/random` or `/problem` to get your own.",
+                ephemeral=True,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            return
+
         channel_ids, role_ids, _ = interaction_context(interaction)
         if not is_allowed(self.bot.settings.bot, channel_ids, role_ids):
             await interaction.response.send_message(
@@ -295,7 +306,7 @@ class Problems(commands.Cog):
         if filters is not None:
             await self._random(interaction, filters)
             return
-        problem_id, step = nav  # type: ignore[misc]
+        problem_id, step, _ = nav  # type: ignore[misc]
         problem = await self.bot.db.call(lambda repo: repo.neighbour(problem_id, step))
         if problem is None:
             where = "next" if step > 0 else "previous"

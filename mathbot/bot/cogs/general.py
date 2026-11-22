@@ -33,10 +33,11 @@ HELP: dict[str, tuple[str, str]] = {
     ),
     "buttons": (
         "The buttons under a problem",
-        "**Show answer**: only you see it, as a spoiler.\n"
+        "Previous, Next and Another random work only for the person who ran the command.\n"
+        "**Show answer**: anyone can press it; only they see the answer, as a spoiler.\n"
         "**Previous / Next**: the neighbouring problems of the same contest and year.\n"
         "**Another random** (under `/random` results): the same `/random` filters again.\n"
-        "**Source / Official solution**: the original pages.",
+        "**Solution / Source**: the original pages.",
     ),
     "contests": ("List all contests", "Shows every contest with the years and number of problems loaded."),
     "contest": ("Details for one contest", "`/contest contest:Euclid` - years available, format and aliases."),

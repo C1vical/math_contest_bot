@@ -345,17 +345,21 @@ starts the health server and then connects. Slash commands:
 | `/help [command]` | Help. |
 | `/admin status`, `/admin sync` | Admin only: validation summary and last ingestion run; re-sync commands. |
 
-Under every problem:
+Under every problem, in one row:
 
-* **Show answer** (when an answer is stored): shown privately, in a spoiler.
-* **Official solution** (CEMC) and **Source**: links to the original pages.
 * **Previous / Next**: the neighbouring problems of the same contest and year.
 * **Another random** (only under `/random` results): the same `/random` filters
   again. It is not shown under `/problem` or under a Previous / Next result, because
   those can't carry the original filters.
+* **Show answer** (when an answer is stored): shown privately, in a spoiler.
+* **Solution** (CEMC) and **Source**: links to the original pages. A row holds at
+  most five buttons; when there are six, Source is left out (the embed title links
+  to the same page).
 
-The buttons carry what they need in their Discord `custom_id`, so messages posted
-before a restart keep working. Presses obey `ALLOWED_CHANNEL_IDS` / `ALLOWED_ROLE_IDS`.
+Previous, Next and Another random work only for the person who ran the command;
+anyone else gets a private note. Show answer and the links work for everyone. The
+buttons carry what they need (including the owner) in their Discord `custom_id`, so
+messages posted before a restart keep working. Presses obey `ALLOWED_CHANNEL_IDS` / `ALLOWED_ROLE_IDS`.
 Commands and button presses each have a short per-user cooldown
 (`COMMAND_COOLDOWN_SECONDS`, admins exempt).
 

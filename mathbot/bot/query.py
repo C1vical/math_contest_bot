@@ -80,9 +80,10 @@ _FIELD_CODES = {
     "number": "n",
     "difficulty": "d",
     "source": "s",
+    "owner": "u",
 }
 _CODE_FIELDS = {code: name for name, code in _FIELD_CODES.items()}
-_INT_FIELDS = {"year", "year_from", "year_to", "number"}
+_INT_FIELDS = {"year", "year_from", "year_to", "number", "owner"}
 _TOKEN = re.compile(r"^[A-Za-z0-9_]{1,40}$")
 
 
@@ -97,6 +98,7 @@ class RandomFilters:
     number: int | None = None
     difficulty: str | None = None
     source: str | None = None
+    owner: int | None = None  # the user allowed to press the button (None: anyone, older buttons)
 
     def custom_id(self) -> str | None:
         """``mathbot:rand:c=AMC10A;f=2010``, or None when it would not fit Discord's limit."""

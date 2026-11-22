@@ -119,7 +119,7 @@ def test_problem_view_has_navigation_with_ends_disabled(repo, bot):
     view = interaction.followup.messages[0]["view"]
     buttons = {item.label: item for item in view.children}
     assert buttons["Previous"].disabled and not buttons["Next"].disabled
-    assert buttons["Next"].custom_id == ui.nav_custom_id("amc10a-2024-p01", +1)
+    assert buttons["Next"].custom_id == ui.nav_custom_id("amc10a-2024-p01", +1, 1)
     assert "Another random" not in buttons  # only /random results can repeat themselves
 
 
@@ -135,18 +135,18 @@ def test_unfiltered_random_stays_unfiltered_and_navigation_drops_the_reroll(repo
     first = FakeInteraction(client)
     run(Problems.random.callback(Problems(client), first))
     reroll = _labels(first.followup.messages[0])["Another random"]
-    assert RandomFilters.from_custom_id(reroll.custom_id) == RandomFilters()  # no contest added
+    assert RandomFilters.from_custom_id(reroll.custom_id) == RandomFilters(owner=1)  # no contest added
 
     shown = first.followup.messages[0]["embed"].title.rsplit(" ", 1)[-1]
     step = -1 if shown != "1" else +1
-    nav = FakeInteraction(client, custom_id=ui.nav_custom_id(f"amc10a-2024-p{int(shown):02d}", step))
+    nav = FakeInteraction(client, custom_id=ui.nav_custom_id(f"amc10a-2024-p{int(shown):02d}", step, 1))
     run(Problems(client).on_interaction(nav))
     assert "Another random" not in _labels(nav.followup.messages[0])
 
     again = FakeInteraction(client, custom_id=reroll.custom_id)
     run(Problems(client).on_interaction(again))
     assert RandomFilters.from_custom_id(_labels(again.followup.messages[0])["Another random"].custom_id) == (
-        RandomFilters()
+        RandomFilters(owner=1)
     )
 
 
@@ -188,7 +188,7 @@ def test_random_unknown_contest_suggests_names(repo, bot):
 def test_next_button_posts_the_next_problem(repo, bot):
     amc(repo, numbers=(1, 2))
     client = bot()
-    interaction = FakeInteraction(client, custom_id=ui.nav_custom_id("amc10a-2024-p01", +1))
+    interaction = FakeInteraction(client, custom_id=ui.nav_custom_id("amc10a-2024-p01", +1, 1))
     run(Problems(client).on_interaction(interaction))
     assert interaction.response.deferred
     assert interaction.followup.messages[0]["embed"].title == "2024 AMC 10A Problem 2"
@@ -197,7 +197,7 @@ def test_next_button_posts_the_next_problem(repo, bot):
 def test_next_button_at_the_end_explains_privately(repo, bot):
     amc(repo, numbers=(1,))
     client = bot()
-    interaction = FakeInteraction(client, custom_id=ui.nav_custom_id("amc10a-2024-p01", +1))
+    interaction = FakeInteraction(client, custom_id=ui.nav_custom_id("amc10a-2024-p01", +1, 1))
     run(Problems(client).on_interaction(interaction))
     [message] = interaction.response.messages
     assert message["ephemeral"] and "no next problem" in message["content"]
@@ -216,7 +216,7 @@ def test_another_random_button_repeats_the_filters(repo, bot):
 def test_buttons_obey_the_channel_allow_list(repo, bot):
     amc(repo)
     client = bot(ALLOWED_CHANNEL_IDS="99")
-    interaction = FakeInteraction(client, custom_id=ui.nav_custom_id("amc10a-2024-p01", +1), channel_id=10)
+    interaction = FakeInteraction(client, custom_id=ui.nav_custom_id("amc10a-2024-p01", +1, 1), channel_id=10)
     run(Problems(client).on_interaction(interaction))
     assert interaction.followup.messages == [] and "can't be used here" in interaction.response.messages[0]["content"]
 
@@ -225,7 +225,7 @@ def test_buttons_have_a_per_user_cooldown(repo, bot):
     amc(repo)
     client = bot(COMMAND_COOLDOWN_SECONDS="30")
     cog = Problems(client)
-    custom_id = ui.nav_custom_id("amc10a-2024-p01", +1)
+    custom_id = ui.nav_custom_id("amc10a-2024-p01", +1, 1)
     first, second = FakeInteraction(client, custom_id=custom_id), FakeInteraction(client, custom_id=custom_id)
     run(cog.on_interaction(first))
     run(cog.on_interaction(second))
@@ -328,3 +328,49 @@ def test_global_sync_leaves_global_commands_to_the_tree(tmp_path, registry):
 
     run(go())
     assert calls == [("sync", None)]
+
+
+def test_only_the_person_who_ran_the_command_can_use_its_buttons(repo, bot):
+    amc(repo)
+    client = bot()
+    for custom_id in (ui.nav_custom_id("amc10a-2024-p01", +1, 1), RandomFilters(owner=1).custom_id()):
+        stranger = FakeInteraction(client, custom_id=custom_id, user_id=2)
+        run(Problems(client).on_interaction(stranger))
+        [message] = stranger.response.messages
+        assert message["ephemeral"] and "Only <@1>" in message["content"] and stranger.followup.messages == []
+    owner = FakeInteraction(client, custom_id=ui.nav_custom_id("amc10a-2024-p01", +1, 1), user_id=1)
+    run(Problems(client).on_interaction(owner))
+    assert owner.followup.messages[0]["embed"].title == "2024 AMC 10A Problem 2"
+
+
+def test_buttons_posted_before_owners_were_recorded_still_work_for_anyone(repo, bot):
+    amc(repo)
+    client = bot()
+    old = FakeInteraction(client, custom_id="mathbot:nav:+1:amc10a-2024-p01", user_id=2)
+    run(Problems(client).on_interaction(old))
+    assert old.followup.messages[0]["embed"].title == "2024 AMC 10A Problem 2"
+
+
+def test_show_answer_stays_open_to_everyone(repo, bot):
+    amc(repo)
+    repo.conn.execute("UPDATE problems SET answer = 'C' WHERE id = 'amc10a-2024-p01'")
+    client = bot()
+    other = FakeInteraction(client, custom_id=f"{ui.ANSWER_PREFIX}amc10a-2024-p01", user_id=2)
+    run(Problems(client).on_interaction(other))
+    assert other.response.messages[0]["ephemeral"] and "||C||" in other.response.messages[0]["content"]
+
+
+def test_all_buttons_fit_in_one_row_and_source_gives_way(repo):
+    import dataclasses
+
+    full = dataclasses.replace(add_problem(repo), answer="D", solution_url="https://cemc.example/solution.html")
+
+    async def build(problem, again):
+        view = ui.problem_view(problem, owner_id=7, has_previous=True, has_next=True, again=again)
+        return [(item.label, item.row) for item in view.children]
+
+    six = run(build(full, RandomFilters()))  # would be six buttons: Source is dropped
+    assert [label for label, _ in six] == ["Previous", "Next", "Another random", "Show answer", "Solution"]
+    assert {row for _, row in six} == {0}
+    plain = run(build(dataclasses.replace(full, answer=None, solution_url=None), None))
+    assert [label for label, _ in plain] == ["Previous", "Next", "Source"]

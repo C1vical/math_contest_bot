@@ -90,8 +90,8 @@ def test_answer_button_only_when_an_answer_exists(repo):
     problem = add_problem(repo)
 
     async def build():
-        plain = ui.problem_view(problem)
-        answered = ui.problem_view(dataclasses.replace(problem, answer="C"))
+        plain = ui.problem_view(problem, owner_id=1)
+        answered = ui.problem_view(dataclasses.replace(problem, answer="C"), owner_id=1)
         return [i.label for i in plain.children], [(i.label, i.custom_id) for i in answered.children]
 
     plain, answered = asyncio.run(build())
@@ -295,6 +295,6 @@ def test_official_solution_link_appears_when_stored(repo):
     problem = dataclasses.replace(add_problem(repo), solution_url="https://cemc.uwaterloo.ca/solutions.html")
 
     async def build():
-        return [(i.label, i.url) for i in ui.problem_view(problem).children]
+        return [(i.label, i.url) for i in ui.problem_view(problem, owner_id=1).children]
 
-    assert ("Official solution", "https://cemc.uwaterloo.ca/solutions.html") in asyncio.run(build())
+    assert ("Solution", "https://cemc.uwaterloo.ca/solutions.html") in asyncio.run(build())

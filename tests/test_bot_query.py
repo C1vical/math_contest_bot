@@ -36,7 +36,9 @@ def test_out_of_range_numbers_are_left_in_the_name(registry):
 
 
 def test_random_filters_round_trip_through_a_button_id():
-    filters = RandomFilters(contest="AMC10A", year_from=2010, year_to=2020, difficulty="hard", source="aops_wiki")
+    filters = RandomFilters(
+        contest="AMC10A", year_from=2010, year_to=2020, difficulty="hard", source="aops_wiki", owner=123456789012345678
+    )
     custom_id = filters.custom_id()
     assert custom_id is not None and len(custom_id) <= 100
     assert RandomFilters.from_custom_id(custom_id) == filters

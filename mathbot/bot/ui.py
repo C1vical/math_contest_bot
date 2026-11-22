@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import difflib
 import io
 
@@ -95,66 +96,81 @@ def problem_embed(problem: ProblemRow, *, has_image: bool) -> discord.Embed:
     return embed
 
 
-def nav_custom_id(problem_id: str, step: int) -> str:
-    return f"{NAV_PREFIX}{step:+d}:{problem_id}"
+MAX_ROW_ITEMS = 5  # Discord's limit for one row of buttons
 
 
-def parse_nav_custom_id(custom_id: str) -> tuple[str, int] | None:
-    """``(problem id, step)`` from a Previous / Next button, or None if malformed."""
+def nav_custom_id(problem_id: str, step: int, owner_id: int) -> str:
+    """``mathbot:nav:+1:<owner user id>:<problem id>``."""
+    return f"{NAV_PREFIX}{step:+d}:{owner_id}:{problem_id}"
+
+
+def parse_nav_custom_id(custom_id: str) -> tuple[str, int, int | None] | None:
+    """``(problem id, step, owner id)`` from a Previous / Next button, or None if malformed.
+
+    Buttons posted before owners were recorded (``mathbot:nav:+1:<problem id>``) have
+    no owner (None): anyone may press those.
+    """
     if not custom_id.startswith(NAV_PREFIX):
         return None
-    step, _, problem_id = custom_id[len(NAV_PREFIX) :].partition(":")
-    if step not in {"+1", "-1"} or not problem_id:
+    step, _, rest = custom_id[len(NAV_PREFIX) :].partition(":")
+    owner, sep, problem_id = rest.partition(":")
+    if not sep:  # the older form without an owner
+        owner, problem_id = "", rest
+    if step not in {"+1", "-1"} or not problem_id or (owner and not owner.isdigit()):
         return None
-    return problem_id, int(step)
+    return problem_id, int(step), int(owner) if owner else None
 
 
 def problem_view(
     problem: ProblemRow,
     *,
+    owner_id: int,
     has_previous: bool = False,
     has_next: bool = False,
     again: RandomFilters | None = None,
 ) -> discord.ui.View:
-    """Links and buttons under a problem.
+    """The buttons under a problem, in one row.
 
-    Row 1: source and official-solution links, and "Show answer" (private) when an
-    answer is stored. Row 2: Previous / Next problem of the same sitting, and, only
-    under a /random result, "Another random" repeating that call's filters (``again``).
-    It is left off everywhere else: a Previous / Next message cannot carry the original
-    filters (custom ids are limited to 100 characters), and a guessed substitute such
-    as "this contest" silently narrowed an unfiltered /random. Every button's
-    ``custom_id`` carries what it needs and is handled by a listener, so the buttons
-    keep working after a bot restart.
+    Previous / Next (same sitting) and, only under a /random result, "Another random"
+    repeating that call's filters (``again``); these work only for ``owner_id``, the
+    user who ran the command. "Show answer" (private to whoever presses it) and the
+    official-solution and source links work for anyone. A row holds at most five
+    buttons, so the Source link is the one dropped when they don't fit: the embed
+    title links to the same page.
+
+    "Another random" is left off everywhere else: a Previous / Next message cannot
+    carry the original filters (custom ids are limited to 100 characters), and a
+    guessed substitute such as "this contest" silently narrowed an unfiltered /random.
+    Every ``custom_id`` carries what it needs and is handled by a listener, so the
+    buttons keep working after a bot restart.
     """
-    view = discord.ui.View(timeout=None)
-    view.add_item(discord.ui.Button(label="Source", url=problem.source_url, row=0))
-    if problem.solution_url:
-        view.add_item(discord.ui.Button(label="Official solution", url=problem.solution_url, row=0))
-    if problem.answer:
-        view.add_item(
-            discord.ui.Button(
-                label="Show answer",
-                style=discord.ButtonStyle.secondary,
-                custom_id=f"{ANSWER_PREFIX}{problem.id}",
-                row=0,
-            )
+    items: list[discord.ui.Button] = [
+        discord.ui.Button(
+            label=label,
+            style=discord.ButtonStyle.secondary,
+            custom_id=nav_custom_id(problem.id, step, owner_id),
+            disabled=not enabled,
         )
-    for label, step, enabled in (("Previous", -1, has_previous), ("Next", +1, has_next)):
-        view.add_item(
-            discord.ui.Button(
-                label=label,
-                style=discord.ButtonStyle.secondary,
-                custom_id=nav_custom_id(problem.id, step),
-                disabled=not enabled,
-                row=1,
-            )
-        )
-    random_id = again.custom_id() if again is not None else None
+        for label, step, enabled in (("Previous", -1, has_previous), ("Next", +1, has_next))
+    ]
+    random_id = dataclasses.replace(again, owner=owner_id).custom_id() if again is not None else None
     if random_id is not None:
-        view.add_item(
-            discord.ui.Button(label="Another random", style=discord.ButtonStyle.primary, custom_id=random_id, row=1)
+        items.append(discord.ui.Button(label="Another random", style=discord.ButtonStyle.primary, custom_id=random_id))
+    if problem.answer:
+        items.append(
+            discord.ui.Button(
+                label="Show answer", style=discord.ButtonStyle.secondary, custom_id=f"{ANSWER_PREFIX}{problem.id}"
+            )
         )
+    if problem.solution_url:
+        items.append(discord.ui.Button(label="Solution", url=problem.solution_url))
+    if len(items) < MAX_ROW_ITEMS:
+        items.append(discord.ui.Button(label="Source", url=problem.source_url))
+
+    view = discord.ui.View(timeout=None)
+    for item in items:
+        item.row = 0
+        view.add_item(item)
     return view
 
 
