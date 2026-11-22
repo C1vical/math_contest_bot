@@ -57,6 +57,11 @@ class MathBot(commands.Bot):
             guild = discord.Object(id=guild_id)
             self.tree.copy_global_to(guild=guild)
             synced = await self.tree.sync(guild=guild)
+            # With GUILD_ID the commands live in that server. Anything still registered
+            # globally was left by an older version or an earlier global sync and shows up
+            # as a duplicate (/problem twice) or a dead command (/gimme), so clear it.
+            await self.http.bulk_upsert_global_commands(self.application_id, [])
+            log.info("cleared global slash commands (GUILD_ID is set)")
         else:
             synced = await self.tree.sync()
         log.info("slash commands synced", extra={"count": len(synced), "guild": guild_id or "global"})

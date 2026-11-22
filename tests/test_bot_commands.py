@@ -252,3 +252,52 @@ def test_every_command_fits_discord_limits(tmp_path, registry):
 
     for command in run(payloads()):
         check(command)
+
+
+def _bot_with_fake_discord(tmp_path, registry, **env):
+    from mathbot.bot.app import MathBot
+    from mathbot.bot.health import HealthState
+
+    settings = load_settings({"DATA_DIR": str(tmp_path), "SYNC_COMMANDS": "false", **env})
+    bot = MathBot(settings, registry, HealthState())
+    calls: list[tuple] = []
+
+    async def tree_sync(*, guild=None):
+        calls.append(("sync", guild.id if guild else None))
+        return ["cmd"] * 7
+
+    async def bulk_upsert_global_commands(application_id, payload):
+        calls.append(("global", application_id, list(payload)))
+        return []
+
+    bot.tree.sync = tree_sync
+    bot.http.bulk_upsert_global_commands = bulk_upsert_global_commands
+    bot._connection.application_id = 42
+    return bot, calls
+
+
+def test_guild_sync_also_removes_stale_global_commands(tmp_path, registry):
+    """With GUILD_ID set, commands live in that server. Global ones registered by an older
+    version (/gimme, /info, a second /problem) would otherwise stay forever."""
+    bot, calls = _bot_with_fake_discord(tmp_path, registry, GUILD_ID="123")
+
+    async def go():
+        await bot.setup_hook()
+        count = await bot.sync_commands()
+        await bot.close()
+        return count
+
+    assert run(go()) == 7
+    assert calls == [("sync", 123), ("global", 42, [])]
+
+
+def test_global_sync_leaves_global_commands_to_the_tree(tmp_path, registry):
+    bot, calls = _bot_with_fake_discord(tmp_path, registry)
+
+    async def go():
+        await bot.setup_hook()
+        await bot.sync_commands()
+        await bot.close()
+
+    run(go())
+    assert calls == [("sync", None)]

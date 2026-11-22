@@ -55,7 +55,7 @@ rejected at startup with the variable's name in the error.
 | `DISCORD_TOKEN` | Bot token. Only needed by `python -m mathbot bot`. |
 | `ALLOWED_CHANNEL_IDS`, `ALLOWED_ROLE_IDS` | Restrict where and by whom commands work. Empty means no restriction. |
 | `ADMIN_ROLE_IDS`, `ADMIN_USER_IDS` | Who may use `/admin`. If both are empty, members with **Manage Server** are admins. |
-| `GUILD_ID` | Sync slash commands to one server instantly instead of globally. |
+| `GUILD_ID` | Sync slash commands to one server instantly instead of globally. Global commands left over from older versions (`/gimme`, a duplicate `/problem`) are removed at the same time. |
 | `ANNOUNCE_CHANNEL_ID` | Post "online" once per process start (not on every reconnect). |
 | `ENABLE_CONTESTS`, `DISABLE_CONTESTS` | Switch optional contests on (e.g. `CJMO,CMOQR,GAUSS7`) or defaults off. |
 | `HTTP_USER_AGENT` | Identify your crawler honestly, with contact details. |
