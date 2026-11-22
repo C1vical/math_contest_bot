@@ -35,8 +35,7 @@ HELP: dict[str, tuple[str, str]] = {
         "The buttons under a problem",
         "**Show answer**: only you see it, as a spoiler.\n"
         "**Previous / Next**: the neighbouring problems of the same contest and year.\n"
-        "**Another random**: the same `/random` filters again (under `/problem`: another problem "
-        "from that contest).\n"
+        "**Another random** (under `/random` results): the same `/random` filters again.\n"
         "**Source / Official solution**: the original pages.",
     ),
     "contests": ("List all contests", "Shows every contest with the years and number of problems loaded."),

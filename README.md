@@ -350,8 +350,9 @@ Under every problem:
 * **Show answer** (when an answer is stored): shown privately, in a spoiler.
 * **Official solution** (CEMC) and **Source**: links to the original pages.
 * **Previous / Next**: the neighbouring problems of the same contest and year.
-* **Another random**: the same `/random` filters again (under `/problem`, another
-  problem from that contest).
+* **Another random** (only under `/random` results): the same `/random` filters
+  again. It is not shown under `/problem` or under a Previous / Next result, because
+  those can't carry the original filters.
 
 The buttons carry what they need in their Discord `custom_id`, so messages posted
 before a restart keep working. Presses obey `ALLOWED_CHANNEL_IDS` / `ALLOWED_ROLE_IDS`.

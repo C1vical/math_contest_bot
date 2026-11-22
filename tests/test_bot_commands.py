@@ -120,7 +120,34 @@ def test_problem_view_has_navigation_with_ends_disabled(repo, bot):
     buttons = {item.label: item for item in view.children}
     assert buttons["Previous"].disabled and not buttons["Next"].disabled
     assert buttons["Next"].custom_id == ui.nav_custom_id("amc10a-2024-p01", +1)
-    assert RandomFilters.from_custom_id(buttons["Another random"].custom_id) == RandomFilters(contest="AMC10A")
+    assert "Another random" not in buttons  # only /random results can repeat themselves
+
+
+def _labels(message):
+    return {item.label: item for item in message["view"].children}
+
+
+def test_unfiltered_random_stays_unfiltered_and_navigation_drops_the_reroll(repo, bot):
+    """Regression: /random -> Cayley -> Previous -> "Another random" gave only Cayley
+    problems, because the Previous message guessed "this contest" as the filter."""
+    amc(repo)
+    client = bot()
+    first = FakeInteraction(client)
+    run(Problems.random.callback(Problems(client), first))
+    reroll = _labels(first.followup.messages[0])["Another random"]
+    assert RandomFilters.from_custom_id(reroll.custom_id) == RandomFilters()  # no contest added
+
+    shown = first.followup.messages[0]["embed"].title.rsplit(" ", 1)[-1]
+    step = -1 if shown != "1" else +1
+    nav = FakeInteraction(client, custom_id=ui.nav_custom_id(f"amc10a-2024-p{int(shown):02d}", step))
+    run(Problems(client).on_interaction(nav))
+    assert "Another random" not in _labels(nav.followup.messages[0])
+
+    again = FakeInteraction(client, custom_id=reroll.custom_id)
+    run(Problems(client).on_interaction(again))
+    assert RandomFilters.from_custom_id(_labels(again.followup.messages[0])["Another random"].custom_id) == (
+        RandomFilters()
+    )
 
 
 # --------------------------------------------------------------------------- /random

@@ -119,10 +119,13 @@ def problem_view(
     """Links and buttons under a problem.
 
     Row 1: source and official-solution links, and "Show answer" (private) when an
-    answer is stored. Row 2: Previous / Next problem of the same sitting, and
-    "Another random" repeating ``again`` (the filters of the /random call, or this
-    problem's contest). Every button's ``custom_id`` carries what it needs and is
-    handled by a listener, so the buttons keep working after a bot restart.
+    answer is stored. Row 2: Previous / Next problem of the same sitting, and, only
+    under a /random result, "Another random" repeating that call's filters (``again``).
+    It is left off everywhere else: a Previous / Next message cannot carry the original
+    filters (custom ids are limited to 100 characters), and a guessed substitute such
+    as "this contest" silently narrowed an unfiltered /random. Every button's
+    ``custom_id`` carries what it needs and is handled by a listener, so the buttons
+    keep working after a bot restart.
     """
     view = discord.ui.View(timeout=None)
     view.add_item(discord.ui.Button(label="Source", url=problem.source_url, row=0))
@@ -147,7 +150,7 @@ def problem_view(
                 row=1,
             )
         )
-    random_id = (again or RandomFilters(contest=problem.series_key)).custom_id()
+    random_id = again.custom_id() if again is not None else None
     if random_id is not None:
         view.add_item(
             discord.ui.Button(label="Another random", style=discord.ButtonStyle.primary, custom_id=random_id, row=1)
