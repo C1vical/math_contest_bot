@@ -220,3 +220,51 @@ def test_repository_works_on_a_fresh_connection_per_thread(tmp_path, registry):
     assert second.get_problem("AMC10A", 2024, 5) is not None
     first.conn.close()
     second.conn.close()
+
+
+# Columns a reverted experiment added to source_records as migration 3 (applied on 2026-11-22
+# to a real database). Code that did not know version 3 refused to open that database.
+_EXPERIMENT_V3 = (
+    "ALTER TABLE source_records ADD COLUMN parser_source TEXT NOT NULL DEFAULT 'existing'",
+    "ALTER TABLE source_records ADD COLUMN fallback_used INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE source_records ADD COLUMN fetch_status INTEGER",
+    "ALTER TABLE source_records ADD COLUMN fetch_timestamp TEXT",
+    "ALTER TABLE source_records ADD COLUMN fallback_error TEXT",
+    "ALTER TABLE source_records ADD COLUMN asset_status TEXT NOT NULL DEFAULT 'not_needed'",
+    "ALTER TABLE source_records ADD COLUMN render_status TEXT NOT NULL DEFAULT 'pending'",
+    "ALTER TABLE source_records ADD COLUMN ingestion_error TEXT",
+)
+
+
+def _columns(conn, table):
+    return [row[1] for row in conn.execute(f"PRAGMA table_info({table})")]
+
+
+def test_database_at_version_3_from_the_reverted_experiment_opens_and_matches_a_fresh_one(tmp_path):
+    from mathbot.db.schema import MIGRATIONS
+
+    old = connect(tmp_path / "old.db")
+    old.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
+    for version, sql in MIGRATIONS[:2]:
+        for statement in filter(None, (s.strip() for s in sql.split(";"))):
+            old.execute(statement)
+        old.execute("INSERT INTO schema_migrations VALUES (?, 'x')", (version,))
+    for statement in _EXPERIMENT_V3:
+        old.execute(statement)
+    old.execute("INSERT INTO schema_migrations VALUES (3, 'x')")
+    old.close()
+
+    reopened = open_database(tmp_path / "old.db")  # raised "schema version 3 is newer" before
+    fresh = open_database(tmp_path / "fresh.db")
+    assert _columns(reopened, "source_records") == _columns(fresh, "source_records")
+    reopened.close()
+    fresh.close()
+
+
+def test_concurrent_migration_does_not_apply_a_version_twice(tmp_path):
+    first, second = connect(tmp_path / "p.db"), connect(tmp_path / "p.db")
+    assert migrate(first) == LATEST_VERSION
+    assert migrate(second) == LATEST_VERSION  # sees the work of the first, applies nothing
+    assert second.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == LATEST_VERSION
+    first.close()
+    second.close()

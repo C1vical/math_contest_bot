@@ -10,15 +10,10 @@ from mathbot.sources.base import SourceAdapter
 from mathbot.sources.cemc import CemcAdapter
 
 
-def build_adapters(
-    client: PoliteClient,
-    *,
-    refresh: bool = False,
-    fallback: str = "none",
-) -> dict[str, SourceAdapter]:
+def build_adapters(client: PoliteClient, *, refresh: bool = False) -> dict[str, SourceAdapter]:
     return {
-        AOPS_WIKI: AopsWikiAdapter(client, refresh=refresh, fallback=fallback),
-        AOPS_COMMUNITY: AopsCommunityAdapter(client, refresh=refresh, fallback=fallback),
+        AOPS_WIKI: AopsWikiAdapter(client, refresh=refresh),
+        AOPS_COMMUNITY: AopsCommunityAdapter(client, refresh=refresh),
         CEMC: CemcAdapter(client, refresh=refresh),
     }
 

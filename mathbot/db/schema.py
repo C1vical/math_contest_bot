@@ -18,6 +18,7 @@ problem_assets    which problem uses which asset
 renders           PNG render manifest keyed by (problem, content hash, renderer)
 solutions         official solutions, one per (problem, provider), versioned by hash  (v2)
 problem_tags      free-form tags per problem, with where each came from              (v2)
+                  (v3 adds unused columns to source_records; see the migration)
 ingestion_runs    one row per ingest invocation with its counters / report
 ingestion_errors  per-problem / per-edition failures of a run
 ingestion_checkpoints  editions finished by a run (drives --resume)
@@ -211,6 +212,23 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX idx_tags_tag ON problem_tags (tag);
 
         ALTER TABLE problems ADD COLUMN difficulty REAL
+        """,
+    ),
+    (
+        # Added by an experiment that was later reverted, after it had already migrated a
+        # real database. Nothing reads or writes these columns. The migration is kept with
+        # exactly the SQL that was applied so every database at version 3 has the same
+        # schema, and so code at this version can open the databases that experiment touched.
+        3,
+        """
+        ALTER TABLE source_records ADD COLUMN parser_source TEXT NOT NULL DEFAULT 'existing';
+        ALTER TABLE source_records ADD COLUMN fallback_used INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE source_records ADD COLUMN fetch_status INTEGER;
+        ALTER TABLE source_records ADD COLUMN fetch_timestamp TEXT;
+        ALTER TABLE source_records ADD COLUMN fallback_error TEXT;
+        ALTER TABLE source_records ADD COLUMN asset_status TEXT NOT NULL DEFAULT 'not_needed';
+        ALTER TABLE source_records ADD COLUMN render_status TEXT NOT NULL DEFAULT 'pending';
+        ALTER TABLE source_records ADD COLUMN ingestion_error TEXT
         """,
     ),
 ]
