@@ -264,6 +264,13 @@ def test_a_wiki_heading_marker_inside_the_choices_paragraph_is_trimmed():
     assert 'src="https://x/d.png"' in trimmed and "Video" not in trimmed
 
 
+def test_spacer_paragraphs_before_the_cut_are_dropped_but_bare_text_is_kept():
+    from mathbot.sources.aops_wiki import trim_statement
+
+    assert trim_statement("<p>Find x.</p><p><br/>\n</p>\n<h3>Solution 1</h3><p>x=2</p>") == "<p>Find x.</p>"
+    assert trim_statement("Find the value of y.<h3>Solution</h3>") == "Find the value of y."
+
+
 def test_statements_that_merely_mention_solutions_are_untouched():
     from mathbot.sources.aops_wiki import trim_statement
 

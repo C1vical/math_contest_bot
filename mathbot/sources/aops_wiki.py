@@ -192,6 +192,12 @@ def trim_statement(html: str) -> str:
         node.replace_with(str(node)[:offset])
     if not soup.get_text(strip=True) and soup.find("img") is None:
         return html
+    # Spacer paragraphs (<p><br/></p>) that stood before the cut would leave a blank band.
+    for last in reversed(list(soup.contents)):
+        has_image = isinstance(last, Tag) and last.find("img") is not None
+        if last.get_text(strip=True) or has_image:
+            break
+        last.extract()
     return str(soup).strip()
 
 
