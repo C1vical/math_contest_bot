@@ -41,7 +41,7 @@ import logging
 import re
 from collections.abc import Iterable
 
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 
 from mathbot.contests import AOPS_WIKI, ContestSeries
 from mathbot.http import HttpError, PoliteClient, SourceBlockedError
@@ -146,6 +146,55 @@ def _is_heading_block(node: object) -> bool:
     return bool(_HEADING.match(node.name)) or "mw-heading" in (node.get("class") or [])
 
 
+# A block whose whole text is a solution heading the wiki did not render as a heading.
+_SOLUTION_LINE = re.compile(r"^(?:(?:video|official|alternate|alternative)\s+)?solutions?(?:\s*\d+)?\s*:?$", re.I)
+# Wikitext heading markup that failed to render ("==Video Solution", "== Note"): text from here on.
+_WIKI_HEADING_MARKUP = re.compile(r"^[ \t]*==", re.M)
+
+
+def _cut_point(soup: BeautifulSoup) -> tuple[Tag | NavigableString, int | None] | None:
+    """The first node where non-statement content starts, and for a text node the offset in it."""
+    for node in soup.descendants:
+        if isinstance(node, Tag):
+            if _is_heading_block(node):
+                return node, None
+            if node.name in {"p", "div"} and _SOLUTION_LINE.match(node.get_text(" ", strip=True)):
+                return node, None
+        elif isinstance(node, NavigableString) and not isinstance(node, Comment):
+            match = _WIKI_HEADING_MARKUP.search(str(node))
+            if match:
+                return node, match.start()
+    return None
+
+
+def trim_statement(html: str) -> str:
+    """Drop everything from the first heading or solution marker on.
+
+    A problem page's statement ends at the next heading. Statements stored by the
+    pre-2.0 scraper sometimes run on into the solutions (``<h3>Solution 1</h3>...``),
+    end in a bare ``<p>Solution</p>``, or carry wikitext that failed to render
+    (``==Video Solution``); all of that would otherwise be drawn into the problem
+    image. If nothing meaningful would be left, ``html`` is returned unchanged.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    found = _cut_point(soup)
+    if found is None:
+        return html
+    node, offset = found
+    current: Tag | NavigableString = node
+    while current.parent is not None:  # remove everything after the cut, at every level
+        for sibling in list(current.next_siblings):
+            sibling.extract()
+        current = current.parent
+    if offset is None:
+        node.extract()
+    else:
+        node.replace_with(str(node)[:offset])
+    if not soup.get_text(strip=True) and soup.find("img") is None:
+        return html
+    return str(soup).strip()
+
+
 def extract_statement(page_html: str) -> str:
     """Return the HTML between the "Problem" heading and the next heading.
 
@@ -173,7 +222,7 @@ def extract_statement(page_html: str) -> str:
             continue
         parts.append(str(node))
 
-    fragment = "".join(parts).strip()
+    fragment = trim_statement("".join(parts).strip())
     if not BeautifulSoup(fragment, "html.parser").get_text(strip=True) and "<img" not in fragment:
         raise WikiParseError("no problem statement found before the first solution heading")
     return fragment

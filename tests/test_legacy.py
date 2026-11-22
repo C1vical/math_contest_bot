@@ -127,3 +127,29 @@ def test_bad_inputs(repo, registry, tmp_path):
         repo, registry, legacy_db(tmp_path / "weird.db", [("x", "MMXX", "IMO", 1, "<p>Statement.</p>", "")])
     )
     assert report.invalid == [("x", "year or problem number is not an integer")]
+
+
+def test_legacy_aops_statements_lose_leaked_solutions(repo, registry, tmp_path):
+    rows = [
+        (
+            "1976_IMO_4",
+            1976,
+            "IMO",
+            4,
+            "<h2>1976 IMO Problem 4</h2><p>Determine the greatest product of positive integers summing to 1976.</p>"
+            '<h3><span class="mw-headline" id="Solution_1">Solution 1</span></h3><p>Use as many 3s as possible.</p>',
+            "0",
+        ),
+        (
+            "1956_AHSME_47",
+            1956,
+            "AHSME",
+            47,
+            "<p>How many days would it take with one machine?</p><p>Solution\n</p>",
+            "0",
+        ),
+    ]
+    import_legacy(repo, registry, legacy_db(tmp_path / "old.db", rows))
+    imo = repo.get_problem("IMO", 1976, 4)
+    assert "greatest product" in imo.statement_html and "3s" not in imo.statement_html
+    assert "Solution" not in repo.get_problem("AHSME", 1956, 47).statement_text

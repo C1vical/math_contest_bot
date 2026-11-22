@@ -9,6 +9,9 @@ live ingest and are treated accordingly:
   ``"0"``, so none is a real answer;
 * the ``<h2>... Problem N</h2>`` title the old scrapers prepended is stripped
   (the renderer adds its own);
+* AoPS Wiki statements are cut at the first heading or solution marker: the old
+  scraper sometimes let the solutions through (``<h3>Solution 1</h3>...``,
+  ``<p>Solution</p>``, ``==Video Solution``), which would be drawn into the image;
 * statements that are empty once the title is gone are rejected - the old
   loader stored a bare title whenever a fetch failed;
 * a problem that already came from a live ingest is never overwritten;
@@ -43,7 +46,7 @@ from mathbot.db.repo import INSERTED, UNCHANGED, UPDATED, Repository
 from mathbot.htmlnorm import InvalidContentError, normalize_fragment
 from mathbot.models import EditionRef, ParsedProblem
 from mathbot.sources.aops_community import CATEGORY_URL
-from mathbot.sources.aops_wiki import PAGE_URL, page_title
+from mathbot.sources.aops_wiki import PAGE_URL, page_title, trim_statement
 from mathbot.sources.base import load_manifest
 
 log = logging.getLogger(__name__)
@@ -190,6 +193,8 @@ def import_legacy(
 
         raw = str(row["question_statement"] or "")
         statement = strip_legacy_title(raw)
+        if series.provider == AOPS_WIKI:
+            statement = trim_statement(statement)  # solution text the old scraper let through
         edition_url, edition_identifier = locator.edition(series, year)
         source_url = locator.problem(series, year, number, edition_url)
         try:
