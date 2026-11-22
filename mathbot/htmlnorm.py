@@ -22,7 +22,7 @@ from bs4 import BeautifulSoup, Comment, Tag
 
 _DROP_TAGS = ("script", "style", "noscript", "iframe", "object", "embed", "form", "input", "button", "link", "meta")
 _DROP_SELECTORS = (".mw-editsection", "#toc", ".toc", ".printfooter", ".catlinks")
-_URL_ATTRS = ("src", "href")
+_URL_ATTRS = ("src", "href", "xlink:href")
 # AoPS renders TeX to images; the alt text is the TeX source.
 _LATEX_IMG_CLASSES = {"latex", "latexcenter", "asy-image"}
 MIN_TEXT_CHARS = 5
@@ -58,6 +58,15 @@ def remote_images(html: str) -> list[str]:
     return list(dict.fromkeys(img["src"] for img in _soup(html).find_all("img") if is_remote_url(img.get("src"))))
 
 
+# Browsers remove ASCII tabs, newlines and control characters from a URL before reading its
+# scheme, so "java\tscript:" is still a script URL.
+_URL_IGNORED_CHARS = re.compile(r"[\x00-\x20]")
+
+
+def _is_script_url(value: str) -> bool:
+    return _URL_IGNORED_CHARS.sub("", value).lower().startswith(("javascript:", "vbscript:"))
+
+
 def normalize_fragment(fragment: str, base_url: str) -> NormalizedContent:
     """Sanitize ``fragment`` and return its normalized HTML, text and hash.
 
@@ -83,7 +92,7 @@ def normalize_fragment(fragment: str, base_url: str) -> NormalizedContent:
             if not isinstance(value, str):
                 continue
             value = value.strip()
-            if value.lower().startswith(("javascript:", "vbscript:")):
+            if _is_script_url(value):
                 del tag.attrs[attr]
             elif value.startswith(("data:", "#")):
                 tag.attrs[attr] = value

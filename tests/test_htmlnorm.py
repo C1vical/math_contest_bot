@@ -68,3 +68,13 @@ def test_extract_text_marks_asymptote_diagrams():
     assert (
         extract_text('<p>See <img class="latexcenter" alt="[asy] draw(); [/asy]" src="x.png"></p>') == "See [diagram]"
     )
+
+
+def test_script_urls_hidden_by_whitespace_or_case_are_removed():
+    """Browsers drop tabs and newlines inside a URL, so "java\tscript:" still runs."""
+    html = normalize_fragment(
+        '<p>Statement text here.<img src="java\tscript:alert(1)"><img src=" JaVaScRiPt:alert(2)">'
+        '<iframe srcdoc="x"></iframe><svg><a href="java&#10;script:alert(3)">x</a></svg></p>',
+        "https://example.org/",
+    ).html
+    assert "script:" not in html.lower() and "alert" not in html

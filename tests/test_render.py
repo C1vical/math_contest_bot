@@ -616,3 +616,9 @@ def test_cleanup_keeps_an_older_renderers_picture_until_it_is_replaced(repo, tmp
     failed = add_problem(repo, 3, "<p>A third statement whose render fails.</p>")
     run(old, [failed], FakeRenderer([RenderError("boom"), RenderError("boom")]))
     assert new.cleanup()["stale_records"] == 1  # a failed attempt has no picture to keep
+
+
+def test_riff_files_are_only_images_when_they_are_webp():
+    assert sniff_image(b"RIFF\x10\x00\x00\x00WEBPVP8 ") == ("image/webp", ".webp")
+    with pytest.raises(AssetError):
+        sniff_image(b"RIFF\x10\x00\x00\x00WAVEfmt ")  # audio, not an image

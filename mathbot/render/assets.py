@@ -50,7 +50,6 @@ _SIGNATURES = (
     (b"\xff\xd8\xff", "image/jpeg", ".jpg"),
     (b"GIF87a", "image/gif", ".gif"),
     (b"GIF89a", "image/gif", ".gif"),
-    (b"RIFF", "image/webp", ".webp"),
 )
 
 
@@ -77,6 +76,8 @@ def sniff_image(data: bytes, declared_type: str = "") -> tuple[str, str]:
     for signature, content_type, extension in _SIGNATURES:
         if data.startswith(signature):
             return content_type, extension
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":  # RIFF is also WAV, AVI...
+        return "image/webp", ".webp"
     head = data[:512].lstrip().lower()
     if head.startswith((b"<svg", b"<?xml")) and b"<svg" in data[:4096].lower():
         return "image/svg+xml", ".svg"
