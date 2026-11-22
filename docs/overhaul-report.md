@@ -121,8 +121,11 @@ new downloads are needed unless the cache expired (`ASSET_TTL`, 30 days).
 
 ## 7. Deferred, `TODO(verify)` and risks
 
-* **Pascal 2020** has no solutions or answers: the listing offers no solutions page
-  for it. Not a parser bug. Left as is.
+* **Pascal 2020** (corrected after review): it had no solutions or answers because
+  CEMC's live listing omits that edition, so it came from the seed manifest, which
+  holds only contest URLs. Fixed in `9012832`: such editions read the solutions page
+  beside the contest page (`.../2020/2020PascalSolution.html`). After re-ingesting,
+  it has 25 solutions and 25 answers.
 * **Not done (low value):** a robots.txt fetch that fails with a network error is
   retried on every request to that host instead of being cached for the run.
 * **Proposals not built:** `/search` by keyword, a daily problem per channel,
