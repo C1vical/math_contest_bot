@@ -68,6 +68,30 @@ _PROBLEM_SELECT = """
 """
 
 
+DIFFICULTIES = ("easy", "medium", "hard")
+# Families sat over two days of three problems each, ordered easy -> hard within each day.
+_TWO_DAY_FAMILIES = ("USAMO", "USAJMO", "IMO")
+# The problem's third of its paper (0 easy, 1 medium, 2 hard), a proxy for difficulty: contests
+# order their problems by difficulty. For a six-problem two-day olympiad, its place in the day.
+_DIFFICULTY_JOIN = """
+    JOIN (SELECT edition_id, MAX(number) AS total FROM problems GROUP BY edition_id) papers
+      ON papers.edition_id = p.edition_id
+"""
+_DIFFICULTY_BUCKET = f"""
+    (CASE WHEN s.family IN ({", ".join(f"'{f}'" for f in _TWO_DAY_FAMILIES)}) AND papers.total = 6
+          THEN (p.number - 1) % 3
+          ELSE ((p.number - 1) * 3) / papers.total END)
+"""
+_HAS_IMAGE = """
+    EXISTS (SELECT 1 FROM renders r
+            WHERE r.problem_id = p.id AND r.content_hash = p.content_hash AND r.status = 'ok')
+"""
+
+
+def _placeholders(values: Sequence[object]) -> str:
+    return ",".join("?" * len(values))
+
+
 class Repository:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
@@ -353,29 +377,70 @@ class Repository:
         *,
         series_keys: Sequence[str] | None = None,
         year: int | None = None,
+        year_from: int | None = None,
+        year_to: int | None = None,
         number: int | None = None,
         provider: str | None = None,
+        difficulty: str | None = None,
+        exclude_ids: Sequence[str] = (),
+        prefer_rendered: bool = True,
     ) -> ProblemRow | None:
-        where, params = ["s.enabled = 1"], []
+        """A random problem of an enabled series matching every filter given.
+
+        ``difficulty`` is ``easy`` / ``medium`` / ``hard``: the problem's position in its
+        paper (see ``_DIFFICULTY_BUCKET``). With ``prefer_rendered`` a problem that has an
+        image is chosen whenever one matches, so the text fallback is the exception.
+        """
+        where, params, joins = ["s.enabled = 1"], [], ""
         if series_keys is not None:
-            where.append(f"s.key IN ({','.join('?' * len(series_keys))})")
+            where.append(f"s.key IN ({_placeholders(series_keys)})")
             params.extend(series_keys)
-        if year is not None:
-            where.append("e.year = ?")
-            params.append(year)
-        if number is not None:
-            where.append("p.number = ?")
-            params.append(number)
-        if provider is not None:
-            where.append("s.provider = ?")
-            params.append(provider)
-        sql = f"{_PROBLEM_SELECT} WHERE {' AND '.join(where)} ORDER BY RANDOM() LIMIT 1"
-        return self._problem(self.conn.execute(sql, params).fetchone())
+        for clause, value in (
+            ("e.year = ?", year),
+            ("e.year >= ?", year_from),
+            ("e.year <= ?", year_to),
+            ("p.number = ?", number),
+            ("s.provider = ?", provider),
+        ):
+            if value is not None:
+                where.append(clause)
+                params.append(value)
+        if difficulty is not None:
+            if difficulty not in DIFFICULTIES:
+                raise ValueError(f"difficulty must be one of {DIFFICULTIES}, got {difficulty!r}")
+            joins = _DIFFICULTY_JOIN
+            where.append(f"{_DIFFICULTY_BUCKET} = ?")
+            params.append(DIFFICULTIES.index(difficulty))
+        if exclude_ids:
+            where.append(f"p.id NOT IN ({_placeholders(exclude_ids)})")
+            params.extend(exclude_ids)
+        order = f"{_HAS_IMAGE} DESC, RANDOM()" if prefer_rendered else "RANDOM()"
+        # Only the id is sorted: sorting whole rows (statements are large) took ~200 ms.
+        sql = f"""
+            SELECT p.id FROM problems p
+            JOIN contest_editions e ON e.id = p.edition_id
+            JOIN contest_series s ON s.id = e.series_id
+            {joins}
+            WHERE {" AND ".join(where)} ORDER BY {order} LIMIT 1
+        """
+        row = self.conn.execute(sql, params).fetchone()
+        return self.get_problem_by_id(row["id"]) if row else None
+
+    def neighbour(self, pid: str, step: int) -> ProblemRow | None:
+        """The next (``step`` > 0) or previous problem of the same sitting, skipping gaps."""
+        comparison, order = (">", "ASC") if step > 0 else ("<", "DESC")
+        sql = f"""
+            {_PROBLEM_SELECT}
+            WHERE p.edition_id = (SELECT edition_id FROM problems WHERE id = ?)
+              AND p.number {comparison} (SELECT number FROM problems WHERE id = ?)
+            ORDER BY p.number {order} LIMIT 1
+        """
+        return self._problem(self.conn.execute(sql, (pid, pid)).fetchone())
 
     def iter_problems(self, series_keys: Sequence[str] | None = None, year: int | None = None) -> list[ProblemRow]:
         where, params = ["1 = 1"], []
         if series_keys is not None:
-            where.append(f"s.key IN ({','.join('?' * len(series_keys))})")
+            where.append(f"s.key IN ({_placeholders(series_keys)})")
             params.extend(series_keys)
         if year is not None:
             where.append("e.year = ?")
@@ -523,7 +588,7 @@ class Repository:
         statuses = "('ok')" if retry_failed else "('ok', 'failed')"
         where, params = ["1 = 1"], [renderer_version]
         if series_keys is not None:
-            where.append(f"s.key IN ({','.join('?' * len(series_keys))})")
+            where.append(f"s.key IN ({_placeholders(series_keys)})")
             params.extend(series_keys)
         sql = f"""
             {_PROBLEM_SELECT}

@@ -268,3 +268,61 @@ def test_concurrent_migration_does_not_apply_a_version_twice(tmp_path):
     assert second.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == LATEST_VERSION
     first.close()
     second.close()
+
+
+def _store_numbers(repo, key, year, numbers):
+    for number in numbers:
+        store(repo, edition(key, year), parsed(number=number, html=f"<p>{key} {year} problem {number} text</p>"))
+
+
+def test_random_year_range_and_excluded_problems(repo):
+    for year in (2019, 2020, 2021, 2022):
+        _store_numbers(repo, "AMC10A", year, [1])
+    years = {repo.random_problem(year_from=2020, year_to=2021).year for _ in range(30)}
+    assert years == {2020, 2021}
+    assert repo.random_problem(year_from=2023) is None
+    shown = ["amc10a-2019-p01", "amc10a-2020-p01", "amc10a-2021-p01"]
+    assert repo.random_problem(exclude_ids=shown).id == "amc10a-2022-p01"
+
+
+def test_random_difficulty_is_the_position_in_the_paper(repo):
+    _store_numbers(repo, "AMC10A", 2024, range(1, 26))  # thirds: 1-9, 10-17, 18-25
+    _store_numbers(repo, "IMO", 2020, range(1, 7))  # two days: 1/4 easy, 2/5 medium, 3/6 hard
+    easy = {repo.random_problem(series_keys=["AMC10A"], difficulty="easy").number for _ in range(60)}
+    hard = {repo.random_problem(series_keys=["AMC10A"], difficulty="hard").number for _ in range(60)}
+    assert max(easy) <= 9 and min(hard) >= 18
+    assert {repo.random_problem(series_keys=["IMO"], difficulty="easy").number for _ in range(30)} == {1, 4}
+    assert {repo.random_problem(series_keys=["IMO"], difficulty="hard").number for _ in range(30)} == {3, 6}
+    with pytest.raises(ValueError):
+        repo.random_problem(difficulty="impossible")
+
+
+def test_random_prefers_problems_that_have_an_image(repo):
+    _store_numbers(repo, "AMC10A", 2024, [1, 2, 3])
+    rendered = repo.get_problem("AMC10A", 2024, 2)
+    repo.record_render(
+        problem_id=rendered.id, content_hash=rendered.content_hash, renderer_version="v", status="ok", local_path="x"
+    )
+    assert {repo.random_problem().id for _ in range(20)} == {rendered.id}
+    assert len({repo.random_problem(prefer_rendered=False).id for _ in range(40)}) == 3
+
+
+def test_neighbouring_problems_in_the_same_sitting(repo):
+    _store_numbers(repo, "AMC10A", 2024, [1, 2, 4])
+    _store_numbers(repo, "AMC10A", 2023, [5])
+    assert repo.neighbour("amc10a-2024-p02", +1).number == 4  # gaps are skipped
+    assert repo.neighbour("amc10a-2024-p02", -1).number == 1
+    assert repo.neighbour("amc10a-2024-p04", +1) is None  # never crosses into another year
+    assert repo.neighbour("amc10a-2024-p01", -1) is None
+    assert repo.neighbour("no-such-problem", +1) is None
+
+
+def test_random_problem_uses_covering_indexes(repo):
+    plan = " ".join(
+        row[3]
+        for row in repo.conn.execute(
+            "EXPLAIN QUERY PLAN SELECT p.id FROM problems p WHERE EXISTS (SELECT 1 FROM renders r"
+            " WHERE r.problem_id = p.id AND r.content_hash = p.content_hash AND r.status = 'ok')"
+        )
+    )
+    assert "COVERING INDEX idx_problems_cover" in plan and "COVERING INDEX idx_renders_current" in plan
