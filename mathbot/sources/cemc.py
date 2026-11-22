@@ -77,7 +77,13 @@ MAX_LISTING_PAGES = 50
 
 _QUESTION_HEADING = re.compile(r"^\s*(?:Part\s+([A-Z])\b|Questions?\b)", re.IGNORECASE)
 _DECLARED_COUNT = re.compile(r"Number of Questions:\s*(\d+)", re.IGNORECASE)
-_ANSWER = re.compile(r"^\s*Answer:\s*\(?\s*([A-Za-z]|-?[\d.,/]+)\s*\)?\s*\.?\s*$")
+# "Answer: (D)" / "Answer: 23". Since 2024 the label is "<span class="smallcaps">Answer</span>: (D)"
+# (text "Answer : (D)") and numeric Part C answers are TeX: "Answer : \(11\)".
+_ANSWER = re.compile(r"^\s*Answer\s*:\s*(?:\\\(\s*)?\(?\s*([A-Za-z]|-?[\d.,/]+)\s*\)?\s*(?:\\\)\s*)?\.?\s*$")
+
+# Part of every edition fingerprint, so incremental runs re-parse unchanged pages after a
+# parser change. Bump it whenever parsing output can change for an existing page.
+PARSER_VERSION = 2  # 2: answers in the 2024+ "smallcaps" format
 
 # (series key, year) -> 1-based indexes of parsed items that are really a
 # continuation of the previous question (verified by reading the page).
@@ -399,8 +405,8 @@ class CemcAdapter:
         only_numbers: frozenset[int] | None = None,
     ) -> EditionResult:
         response = self.client.get(edition.source_url, refresh=self.refresh)
-        result = EditionResult(edition=edition, source_hash=response.sha256)
-        if known is not None and known.source_hash == response.sha256:
+        result = EditionResult(edition=edition, source_hash=f"{response.sha256}+parser{PARSER_VERSION}")
+        if known is not None and known.source_hash == result.source_hash:
             result.unchanged = True
             return result
 
@@ -466,19 +472,25 @@ class CemcAdapter:
         try:
             html = self.client.get(str(solution_url), refresh=self.refresh).text
         except HttpError as exc:
-            result.failures.append(ProblemFailure(None, str(solution_url), "fetch", f"solutions unavailable: {exc}"))
+            result.failures.append(
+                ProblemFailure(None, str(solution_url), "fetch", f"solutions unavailable: {exc}", warning=True)
+            )
             return {}, {}
         items = _solution_items(html)  # one html5lib parse for both
         answers = _answers(items) if series.source.get("multiple_choice") else {}
         solutions = _solutions(items)
         if sorted(solutions) != sorted(numbers):
+            # The numbering cannot be trusted, so neither the solutions nor the answers
+            # taken from the same items are attached to any question.
             result.failures.append(
                 ProblemFailure(
                     None,
                     str(solution_url),
-                    "fetch",
-                    f"solutions page has {len(solutions)} entries for {len(numbers)} questions; solutions not stored",
+                    "validate",
+                    f"solutions page has {len(solutions)} entries for {len(numbers)} questions; "
+                    "solutions and answers not stored",
+                    warning=True,
                 )
             )
-            solutions = {}
+            return {}, {}
         return answers, solutions

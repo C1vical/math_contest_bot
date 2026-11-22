@@ -372,8 +372,7 @@ class Ingestor:
             stored += 1
             report.bump(series.key, {INSERTED: "inserted", UPDATED: "updated", UNCHANGED: "skipped"}[outcome])
 
-        hard_failures = [f for f in result.failures if f.number is not None or f.invalid or f.stage != "fetch"]
-        clean = not hard_failures and (stored or result.skipped_numbers)
+        clean = not any(not f.warning for f in result.failures) and (stored or result.skipped_numbers)
         if not clean:
             report.editions["failed"] += 1
         if not dry_run and clean and not partial:

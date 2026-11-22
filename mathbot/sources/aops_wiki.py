@@ -366,6 +366,8 @@ class AopsWikiAdapter:
         except (HttpError, WikiParseError) as exc:
             # Statements are still valid without a key; record the gap instead of hiding it.
             result.failures.append(
-                ProblemFailure(None, PAGE_URL.format(title=title), "fetch", f"answer key unavailable: {exc}")
+                ProblemFailure(
+                    None, PAGE_URL.format(title=title), "fetch", f"answer key unavailable: {exc}", warning=True
+                )
             )
             return {}

@@ -180,6 +180,7 @@ def parse_problem_items(category: dict, source_url: str) -> tuple[list[ParsedPro
                     "fetch",
                     f"category reports {total} items but the page delivered {len(category['items'])}; "
                     "the rest are only available from an endpoint robots.txt disallows",
+                    warning=True,
                 )
             )
             break

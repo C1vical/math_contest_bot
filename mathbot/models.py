@@ -45,6 +45,9 @@ class ProblemFailure:
     stage: str  # "fetch", "parse", "validate", "discover"
     error: str
     invalid: bool = False  # True when the source answered but the content is unusable
+    # True for a note that does not make the edition incomplete (e.g. no answer key):
+    # the edition is still recorded as fully ingested.
+    warning: bool = False
 
 
 @dataclass
