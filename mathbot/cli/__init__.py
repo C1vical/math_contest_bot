@@ -30,9 +30,10 @@ import argparse
 import sys
 from collections.abc import Sequence
 
-from mathbot.cli import database, images, ingest
+from mathbot.cli import common, database, images, ingest
 from mathbot.config import ConfigError, Settings, load_settings
 from mathbot.contests import UnknownContestError
+from mathbot.db import SchemaTooNewError
 from mathbot.logging_setup import configure_logging
 
 
@@ -57,8 +58,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=ingest.cmd_discover)
 
     def ingest_options(p: argparse.ArgumentParser) -> None:
-        p.add_argument("--year", nargs="+", metavar="YEAR", help="years or ranges, e.g. 2019 2021-2023")
-        p.add_argument("--number", nargs="+", metavar="N", help="problem numbers or ranges")
+        p.add_argument(
+            "--year", nargs="+", type=common.int_ranges, metavar="YEAR", help="years or ranges, e.g. 2019 2021-2023"
+        )
+        p.add_argument("--number", nargs="+", type=common.int_ranges, metavar="N", help="problem numbers or ranges")
         p.add_argument("--full", action="store_true", help="full refresh: re-fetch everything, bypassing the cache")
         p.add_argument("--dry-run", action="store_true", help="fetch and parse but write nothing")
         p.add_argument("--resume", action="store_true", help="skip editions an interrupted run already finished")
@@ -148,7 +151,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         settings = load_settings()
         configure_logging(settings.log_level)
         return args.func(args, settings)
-    except (ConfigError, UnknownContestError) as exc:
+    except (ConfigError, UnknownContestError, SchemaTooNewError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:

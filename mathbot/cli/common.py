@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 from collections.abc import Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING
@@ -54,19 +55,33 @@ def series_keys(registry: ContestRegistry, names: Sequence[str]) -> list[str] | 
     return [s.key for s in select(registry, names)] if names else None
 
 
-def int_set(values: Sequence[str] | None) -> frozenset[int] | None:
-    """Parse ``2019 2021-2023`` style arguments."""
+def int_ranges(value: str) -> frozenset[int]:
+    """One ``--year`` / ``--number`` token: ``2019``, ``2021-2023`` or ``1,3,5-7``.
+
+    Used as an argparse ``type=``, so a malformed value is reported as a usage error
+    before anything runs.
+    """
+    out: set[int] = set()
+    for part in filter(None, (p.strip() for p in value.split(","))):
+        low, sep, high = part.partition("-")
+        try:
+            first = int(low)
+            last = int(high) if sep else first
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"{part!r} is not a number or a range like 2019-2021") from None
+        if last < first:
+            raise argparse.ArgumentTypeError(f"{part!r} is a range that goes backwards")
+        out.update(range(first, last + 1))
+    if not out:
+        raise argparse.ArgumentTypeError(f"{value!r} contains no numbers")
+    return frozenset(out)
+
+
+def int_set(values: Sequence[frozenset[int]] | None) -> frozenset[int] | None:
+    """Merge the parsed ``--year`` / ``--number`` tokens; None (no filter) when there are none."""
     if not values:
         return None
-    out: set[int] = set()
-    for value in values:
-        for part in value.split(","):
-            if "-" in part:
-                low, high = part.split("-", 1)
-                out.update(range(int(low), int(high) + 1))
-            elif part:
-                out.add(int(part))
-    return frozenset(out)
+    return frozenset().union(*values)
 
 
 def say(message: str) -> None:
