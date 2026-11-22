@@ -236,8 +236,8 @@ MIGRATIONS: list[tuple[int, str]] = [
         # (large) problem row or render row. 195 ms -> 15 ms on the 8,880-problem database.
         4,
         """
-        CREATE INDEX idx_problems_cover ON problems (edition_id, number, id, content_hash);
-        CREATE INDEX idx_renders_current ON renders (problem_id, content_hash, status)
+        CREATE INDEX IF NOT EXISTS idx_problems_cover ON problems (edition_id, number, id, content_hash);
+        CREATE INDEX IF NOT EXISTS idx_renders_current ON renders (problem_id, content_hash, status)
         """,
     ),
 ]

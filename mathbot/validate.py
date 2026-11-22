@@ -7,10 +7,13 @@ import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from mathbot.contests import ContestRegistry
 from mathbot.db.repo import Repository
 from mathbot.htmlnorm import MIN_TEXT_CHARS
 
 ERROR, WARNING = "error", "warning"
+# Statements that could hold solution text: a heading, a wikitext marker or the word itself.
+_MAY_LEAK = re.compile(r"<h[1-6]|mw-heading|==|solution", re.IGNORECASE)
 # "(A)", "(\mathrm{A})", "\mathrm{(A)}", "\textbf{(A) }" ... as they appear in statement text.
 _CHOICE_MARKER = re.compile(r"\(\s*(?:\\[a-zA-Z]+\s*\{\s*)?A\s*\}?\s*\)")
 
@@ -74,8 +77,68 @@ def amc_problems_without_choices(conn: sqlite3.Connection) -> list[tuple[str, st
     ]
 
 
-def validate(repo: Repository, renders_dir: Path, renderer_version: str) -> ValidationReport:
-    """Run every integrity check; errors mean the data is wrong, warnings that work is pending."""
+def leaked_solutions(conn: sqlite3.Connection) -> list[str]:
+    """AoPS Wiki statements that still carry solution text after the statement (see ``trim_statement``)."""
+    from mathbot.sources.aops_wiki import trim_statement
+
+    rows = conn.execute(
+        """
+        SELECT p.id, p.statement_html FROM problems p
+        JOIN contest_editions e ON e.id = p.edition_id JOIN contest_series s ON s.id = e.series_id
+        WHERE s.provider = 'aops_wiki' ORDER BY p.id
+        """
+    )
+    # Parsing is only worth it when a cut point is possible at all.
+    return [
+        r["id"]
+        for r in rows
+        if _MAY_LEAK.search(r["statement_html"]) and trim_statement(r["statement_html"]) != r["statement_html"]
+    ]
+
+
+def _delimiters(html: str, delimiter: str) -> int:
+    """Occurrences of a MathJax delimiter, not counting ``\\\\[2mm]`` (a TeX line break)."""
+    return len(re.findall(r"(?<!\\)" + re.escape(delimiter), html))
+
+
+def unbalanced_tex(conn: sqlite3.Connection) -> list[tuple[str, str]]:
+    """``(problem id, detail)`` for statements whose ``\\(``/``\\)`` or ``\\[``/``\\]`` counts differ."""
+    found = []
+    for row in conn.execute(
+        "SELECT id, statement_html FROM problems WHERE instr(statement_html, '\\') > 0 ORDER BY id"
+    ):
+        html = row["statement_html"]
+        for opening, closing in (("\\(", "\\)"), ("\\[", "\\]")):
+            opened, closed = _delimiters(html, opening), _delimiters(html, closing)
+            if opened != closed:
+                found.append((row["id"], f"{opened} {opening} but {closed} {closing}"))
+    return found
+
+
+def missing_answers(conn: sqlite3.Connection, registry: ContestRegistry) -> list[tuple[str, int, int]]:
+    """``(edition id, without answer, problems)`` for multiple-choice editions missing answers."""
+    keys = [s.id for s in registry.all(include_disabled=True) if s.source.get("multiple_choice")]
+    if not keys:
+        return []
+    rows = conn.execute(
+        f"""
+        SELECT e.id, SUM(p.answer IS NULL) AS missing, COUNT(*) AS total
+        FROM problems p JOIN contest_editions e ON e.id = p.edition_id
+        WHERE e.series_id IN ({",".join("?" * len(keys))})
+        GROUP BY e.id HAVING missing > 0 ORDER BY e.id
+        """,
+        keys,
+    )
+    return [(r["id"], r["missing"], r["total"]) for r in rows]
+
+
+def validate(
+    repo: Repository, renders_dir: Path, renderer_version: str, *, registry: ContestRegistry | None = None
+) -> ValidationReport:
+    """Run every integrity check; errors mean the data is wrong, warnings that work is pending.
+
+    ``registry`` enables the checks that need contest metadata (missing multiple-choice answers).
+    """
     conn = repo.conn
     report = ValidationReport()
     add = lambda severity, check, message: report.findings.append(Finding(severity, check, message))  # noqa: E731
@@ -130,6 +193,14 @@ def validate(repo: Repository, renders_dir: Path, renderer_version: str) -> Vali
 
     for problem_id, *_ in amc_problems_without_choices(conn):
         add(WARNING, "no-answer-choices", f"{problem_id} shows no (A)-(E) choices; the statement may be truncated")
+
+    for problem_id in leaked_solutions(conn):
+        add(WARNING, "leaked-solution", f"{problem_id} contains solution text after the statement")
+    for problem_id, detail in unbalanced_tex(conn):
+        add(WARNING, "tex-delimiters", f"{problem_id}: {detail}")
+    if registry is not None:
+        for edition, missing, total in missing_answers(conn, registry):
+            add(WARNING, "missing-answer", f"{edition}: {missing} of {total} multiple-choice problems have no answer")
 
     # One set-based query for every problem's render state (no per-problem queries).
     missing_render = failed_render = missing_file = not_uploaded = 0

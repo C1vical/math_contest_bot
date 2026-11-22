@@ -14,8 +14,9 @@ def cmd_validate(args: argparse.Namespace, settings: Settings) -> int:
     from mathbot.render.template import renderer_version
     from mathbot.validate import validate
 
-    repo = common.repo(settings, common.registry(settings))
-    report = validate(repo, settings.renders_dir, renderer_version(settings.render))
+    registry = common.registry(settings)
+    repo = common.repo(settings, registry)
+    report = validate(repo, settings.renders_dir, renderer_version(settings.render), registry=registry)
     print(report.format())
     if args.strict:
         return 0 if (report.ok and not report.warnings) else 1
