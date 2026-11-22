@@ -21,7 +21,6 @@ HELP: dict[str, tuple[str, str]] = {
         "Contest names are case-insensitive and accept aliases (`aime i`, `AMC 10A`). "
         "Start typing to pick from the list.",
     ),
-    "gimme": ("Same as /problem", "`/gimme year:2024 contest:AMC10A question_number:5` - kept for old habits."),
     "random": (
         "Show a random problem",
         "`/random` with any of `contest`, `year`, `number`, `source`.\n"
@@ -29,7 +28,6 @@ HELP: dict[str, tuple[str, str]] = {
     ),
     "contests": ("List all contests", "Shows every contest with the years and number of problems loaded."),
     "contest": ("Details for one contest", "`/contest contest:Euclid` - years available, format and aliases."),
-    "info": ("Same as /contest", "`/info contest:Euclid`"),
     "stats": ("Database statistics", "Totals by source and the largest contests."),
     "help": ("This menu", "`/help` or `/help command:random`"),
 }

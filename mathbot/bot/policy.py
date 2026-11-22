@@ -71,15 +71,19 @@ def admin_only():
     return app_commands.check(predicate)
 
 
-def cooldown_for(settings: BotSettings, user_id: int) -> app_commands.Cooldown | None:
-    """One problem command per ``COMMAND_COOLDOWN_SECONDS`` per user; admins are exempt."""
-    if settings.command_cooldown <= 0 or user_id in settings.admin_user_ids:
+def cooldown_for(
+    settings: BotSettings, user_id: int, role_ids: Iterable[int] = (), *, manage_guild: bool = False
+) -> app_commands.Cooldown | None:
+    """One problem command per ``COMMAND_COOLDOWN_SECONDS`` per user; admins (as in is_admin) are exempt."""
+    if settings.command_cooldown <= 0 or is_admin(settings, user_id, role_ids, manage_guild=manage_guild):
         return None
     return app_commands.Cooldown(1, settings.command_cooldown)
 
 
 def per_user_cooldown():
     def factory(interaction: discord.Interaction) -> app_commands.Cooldown | None:
-        return cooldown_for(interaction.client.settings.bot, interaction.user.id)  # type: ignore[attr-defined]
+        settings: BotSettings = interaction.client.settings.bot  # type: ignore[attr-defined]
+        _, role_ids, manage_guild = _context(interaction)
+        return cooldown_for(settings, interaction.user.id, role_ids, manage_guild=manage_guild)
 
     return app_commands.checks.dynamic_cooldown(factory, key=lambda interaction: interaction.user.id)

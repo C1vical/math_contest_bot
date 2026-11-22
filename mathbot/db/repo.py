@@ -1,4 +1,8 @@
-"""Repository: every SQL statement the application runs lives here."""
+"""Repository: the queries behind ingestion, rendering and the bot.
+
+The read-only reports in ``validate.py`` and ``coverage.py`` run their own SELECTs
+against ``Repository.conn``; every write goes through this class.
+"""
 
 from __future__ import annotations
 
@@ -8,8 +12,8 @@ from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 
-from mathbot.contests import ContestRegistry, ContestSeries, edition_id, problem_id
-from mathbot.db.connection import utcnow
+from mathbot.contests import ContestRegistry, edition_id, problem_id
+from mathbot.db.connection import iso_utc
 from mathbot.htmlnorm import NormalizedContent, sha256_text
 from mathbot.models import EditionRef, KnownEdition, ParsedProblem
 
@@ -85,7 +89,7 @@ class Repository:
 
     def sync_registry(self, registry: ContestRegistry) -> None:
         """Mirror the code registry into the DB so SQL can join on series and aliases."""
-        now = utcnow()
+        now = iso_utc()
         with self.transaction():
             for s in registry.all(include_disabled=True):
                 self.conn.execute(
@@ -110,7 +114,7 @@ class Repository:
 
     def upsert_edition(self, ref: EditionRef) -> str:
         eid = edition_id(ref.series_key, ref.year)
-        now = utcnow()
+        now = iso_utc()
         self.conn.execute(
             """
             INSERT INTO contest_editions (id, series_id, year, label, source_url, source_identifier,
@@ -137,9 +141,16 @@ class Repository:
         )
         return eid
 
+    def edition_origin(self, series_key: str, year: int) -> str | None:
+        """How a stored edition was found (``discovered``, ``fallback``, ``legacy_import``), or None."""
+        row = self.conn.execute(
+            "SELECT origin FROM contest_editions WHERE id = ?", (edition_id(series_key, year),)
+        ).fetchone()
+        return row["origin"] if row else None
+
     def set_edition_source_hash(self, eid: str, source_hash: str | None) -> None:
         self.conn.execute(
-            "UPDATE contest_editions SET source_hash = ?, updated_at = ? WHERE id = ?", (source_hash, utcnow(), eid)
+            "UPDATE contest_editions SET source_hash = ?, updated_at = ? WHERE id = ?", (source_hash, iso_utc(), eid)
         )
 
     def known_edition(self, series_key: str, year: int) -> KnownEdition:
@@ -190,7 +201,7 @@ class Repository:
         """
         pid = problem_id(ref.series_key, ref.year, parsed.number)
         eid = edition_id(ref.series_key, ref.year)
-        now = utcnow()
+        now = iso_utc()
 
         with self.transaction():
             row = self.conn.execute(
@@ -313,6 +324,18 @@ class Repository:
         )
         return True
 
+    def has_source_record_not_from(self, pid: str, identifier_prefix: str) -> bool:
+        """Whether any source record of ``pid`` has an identifier not starting with ``identifier_prefix``."""
+        row = self.conn.execute(
+            """
+            SELECT 1 FROM source_records
+            WHERE problem_id = ? AND (source_identifier IS NULL OR source_identifier NOT LIKE ?)
+            LIMIT 1
+            """,
+            (pid, identifier_prefix + "%"),
+        ).fetchone()
+        return row is not None
+
     def get_solution(self, pid: str) -> sqlite3.Row | None:
         return self.conn.execute("SELECT * FROM solutions WHERE problem_id = ? ORDER BY id LIMIT 1", (pid,)).fetchone()
 
@@ -419,11 +442,11 @@ class Repository:
                    report = json_object('note', 'interrupted: the process ended before the run finished')
             WHERE status = 'running'
             """,
-            (utcnow(),),
+            (iso_utc(),),
         )
         cur = self.conn.execute(
             "INSERT INTO ingestion_runs (started_at, mode, selection, status) VALUES (?, ?, ?, 'running')",
-            (utcnow(), mode, json.dumps(sorted(selection))),
+            (iso_utc(), mode, json.dumps(sorted(selection))),
         )
         return int(cur.lastrowid)
 
@@ -435,7 +458,7 @@ class Repository:
             WHERE id = ?
             """,
             (
-                utcnow(),
+                iso_utc(),
                 status,
                 counters.get("discovered", 0),
                 counters.get("inserted", 0),
@@ -466,7 +489,7 @@ class Repository:
                                           created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (run_id, provider, series_key, year, number, url, stage, error, utcnow()),
+            (run_id, provider, series_key, year, number, url, stage, error, iso_utc()),
         )
 
     def checkpoint(self, eid: str, run_id: int) -> None:
@@ -475,7 +498,7 @@ class Repository:
             INSERT INTO ingestion_checkpoints (edition_id, run_id, completed_at) VALUES (?, ?, ?)
             ON CONFLICT (edition_id) DO UPDATE SET run_id = excluded.run_id, completed_at = excluded.completed_at
             """,
-            (eid, run_id, utcnow()),
+            (eid, run_id, iso_utc()),
         )
 
     def resumable_editions(self, current_run_id: int) -> set[str]:
@@ -549,7 +572,7 @@ class Repository:
                 size_bytes,
                 attempts,
                 error,
-                utcnow(),
+                iso_utc(),
             ),
         )
 
@@ -576,9 +599,6 @@ class Repository:
             (renderer_version,),
         ).fetchall()
 
-    def renders_pending_upload(self, renderer_version: str) -> list[sqlite3.Row]:
-        return self.current_renders(renderer_version, pending_only=True)
-
     def render_status(self, renderer_version: str) -> list[sqlite3.Row]:
         """One row per problem: its current render (if any) and its latest failure (if any)."""
         return self.conn.execute(
@@ -596,17 +616,26 @@ class Repository:
         ).fetchall()
 
     def mark_uploaded(self, render_id: int) -> None:
-        self.conn.execute("UPDATE renders SET uploaded_at = ? WHERE id = ?", (utcnow(), render_id))
+        self.conn.execute("UPDATE renders SET uploaded_at = ? WHERE id = ?", (iso_utc(), render_id))
 
     def stale_renders(self, renderer_version: str) -> list[sqlite3.Row]:
-        """Renders of superseded content or made by another renderer version."""
+        """Renders cleanup may delete: of superseded content, or by another renderer version.
+
+        A successful render of the current content by another version is only stale once
+        ``renderer_version`` has rendered that content too; until then it is what the bot shows.
+        """
         return self.conn.execute(
             """
             SELECT r.* FROM renders r JOIN problems p ON p.id = r.problem_id
-            WHERE r.content_hash != p.content_hash OR r.renderer_version != ?
+            WHERE r.content_hash != p.content_hash
+               OR (r.renderer_version != ?
+                   AND (r.status != 'ok' OR EXISTS (
+                        SELECT 1 FROM renders c
+                        WHERE c.problem_id = r.problem_id AND c.content_hash = p.content_hash
+                          AND c.renderer_version = ? AND c.status = 'ok')))
             ORDER BY r.id
             """,
-            (renderer_version,),
+            (renderer_version, renderer_version),
         ).fetchall()
 
     def delete_render(self, render_id: int) -> None:
@@ -642,7 +671,7 @@ class Repository:
                 size_bytes = excluded.size_bytes, local_path = excluded.local_path,
                 fetched_at = excluded.fetched_at, expires_at = excluded.expires_at, error = excluded.error
             """,
-            (url, status, sha256, content_type, size_bytes, local_path, utcnow(), expires_at, error),
+            (url, status, sha256, content_type, size_bytes, local_path, iso_utc(), expires_at, error),
         )
         return int(self.conn.execute("SELECT id FROM assets WHERE source_url = ?", (url,)).fetchone()["id"])
 
@@ -650,7 +679,3 @@ class Repository:
         self.conn.execute(
             "INSERT INTO problem_assets (problem_id, asset_id) VALUES (?, ?) ON CONFLICT DO NOTHING", (pid, asset_id)
         )
-
-
-def series_keys(series: Iterable[ContestSeries]) -> list[str]:
-    return [s.key for s in series]

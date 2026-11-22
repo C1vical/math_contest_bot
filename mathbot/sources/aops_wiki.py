@@ -78,14 +78,19 @@ def _spaces(title: str) -> str:
     return title.replace("_", " ")
 
 
-def parse_payload(data: object, url: str) -> dict:
-    """Validate an ``action=parse`` response and return its ``parse`` object."""
+def api_object(data: object, url: str) -> dict:
+    """Return an API response as a dict, raising :class:`WikiApiError` for an ``error`` object."""
     if not isinstance(data, dict):
         raise WikiApiError("API response is not a JSON object", url=url)
     if "error" in data:
         error = data["error"] if isinstance(data["error"], dict) else {}
         raise WikiApiError(f"{error.get('code', 'error')}: {error.get('info', 'unknown API error')}", url=url)
-    parse = data.get("parse")
+    return data
+
+
+def parse_payload(data: object, url: str) -> dict:
+    """Validate an ``action=parse`` response and return its ``parse`` object."""
+    parse = api_object(data, url).get("parse")
     if not isinstance(parse, dict):
         raise WikiApiError("API response has no 'parse' object", url=url)
     return parse
@@ -115,11 +120,13 @@ def payload_links(parse: dict) -> list[str]:
 
 
 def edition_years(link_titles: Iterable[str], source_name: str) -> list[int]:
+    """Years of the ``<year> <name> Problems`` pages among ``link_titles``."""
     pattern = re.compile(rf"^(\d{{4}}) {re.escape(_spaces(source_name))} Problems$")
     return sorted({int(m.group(1)) for t in link_titles if (m := pattern.match(_spaces(t)))})
 
 
 def problem_numbers(link_titles: Iterable[str], year: int, source_name: str) -> list[int]:
+    """Numbers of the ``.../Problem N`` subpages of one edition among ``link_titles``."""
     prefix = re.escape(_spaces(page_title(year, source_name)))
     pattern = re.compile(rf"^{prefix}/Problem (\d+)$")
     return sorted({int(m.group(1)) for t in link_titles if (m := pattern.match(_spaces(t)))})
@@ -193,22 +200,15 @@ def parse_answer_key(page_html: str) -> dict[int, str]:
 class AopsWikiAdapter:
     provider = AOPS_WIKI
 
-    def __init__(self, client: PoliteClient, *, refresh: bool = False, fetch_answers: bool = True) -> None:
+    def __init__(self, client: PoliteClient, *, refresh: bool = False) -> None:
         self.client = client
         self.refresh = refresh
-        self.fetch_answers = fetch_answers
         self._hub_links: dict[str, list[str]] = {}
 
     def _api(self, **params: object) -> dict:
         query = {"format": "json", "formatversion": 2, **params}
         response = self.client.get(API_URL, query, refresh=self.refresh)
-        data = response.json()
-        if isinstance(data, dict) and "error" in data:
-            error = data["error"] if isinstance(data["error"], dict) else {}
-            raise WikiApiError(f"{error.get('code', 'error')}: {error.get('info', '')}", url=response.url)
-        if not isinstance(data, dict):
-            raise WikiApiError("API response is not a JSON object", url=response.url)
-        return data
+        return api_object(response.json(), response.url)
 
     def _links(self, title: str) -> list[str]:
         data = self._api(action="parse", page=title, prop="links", redirects=1)
@@ -355,7 +355,7 @@ class AopsWikiAdapter:
         return f"{edition.year}_{series.source_name}_Answer_Key"
 
     def _answers(self, series: ContestSeries, edition: EditionRef, result: EditionResult) -> dict[int, str]:
-        if not (self.fetch_answers and series.source.get("answer_key")):
+        if not series.source.get("answer_key"):
             return {}
         title = self._answer_title(series, edition)
         try:

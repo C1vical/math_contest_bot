@@ -18,8 +18,7 @@ from mathbot.config import BotSettings, load_settings
 from mathbot.contests import compress_years
 from mathbot.db.repo import SeriesStats
 from mathbot.render.pipeline import RenderPipeline
-from tests.conftest import make_png
-from tests.test_render import FakeRenderer, add_problem
+from tests.conftest import FakeRenderer, add_problem, make_png
 
 # --------------------------------------------------------------------------- policy
 
@@ -133,16 +132,16 @@ def test_valid_remote_image_passes():
     validate_image_response(200, "image/png", make_png())
 
 
-def image_service(repo, tmp_path, registry, **env) -> ImageService:
+def image_service(tmp_path, **env) -> ImageService:
     settings = load_settings({"DATA_DIR": str(tmp_path), "DATABASE_PATH": str(tmp_path / "db" / "problems.db"), **env})
-    return ImageService(settings, Database(settings.database_path), registry)
+    return ImageService(settings, Database(settings.database_path))
 
 
-def test_local_render_is_served_without_any_network(repo, tmp_path, registry):
+def test_local_render_is_served_without_any_network(repo, tmp_path):
     problem = add_problem(repo)
     pipeline = RenderPipeline(repo, load_settings({}).render, tmp_path / "renders")
     asyncio.run(pipeline.render([problem], FakeRenderer()))
-    service = image_service(repo, tmp_path, registry)
+    service = image_service(tmp_path)
 
     async def go():
         first = await service.get(problem)
@@ -154,29 +153,33 @@ def test_local_render_is_served_without_any_network(repo, tmp_path, registry):
     assert first is not None and first.startswith(b"\x89PNG") and first is second
 
 
-def test_missing_render_and_no_remote_yields_none(repo, tmp_path, registry):
+def test_missing_render_and_no_remote_yields_none(repo, tmp_path):
     problem = add_problem(repo)
-    service = image_service(repo, tmp_path, registry)
+    service = image_service(tmp_path)
     assert asyncio.run(service.get(problem)) is None
 
 
-def test_remote_lookup_tries_current_key_then_legacy_key(repo, tmp_path, registry):
+def test_remote_lookup_uses_the_current_render_key(repo, tmp_path):
     problem = add_problem(repo)
     pipeline = RenderPipeline(repo, load_settings({}).render, tmp_path / "elsewhere")  # file not on this disk
     asyncio.run(pipeline.render([problem], FakeRenderer()))
-    service = image_service(repo, tmp_path, registry, IMAGE_BASE_URL="https://img.example.org", S3_KEY_PREFIX="renders")
+    service = image_service(tmp_path, IMAGE_BASE_URL="https://img.example.org", S3_KEY_PREFIX="renders")
     attempts: list[str] = []
 
-    async def fake_fetch(key):
-        attempts.append(key)
-        if key.startswith("renders/"):
-            raise ImageFetchError("HTTP 404")
+    async def fake_fetch(url):
+        attempts.append(url)
         return make_png()
 
     service._fetch = fake_fetch  # type: ignore[method-assign]
-    data = asyncio.run(service.get(problem))
-    assert data is not None
-    assert attempts[0].startswith("renders/imo/imo-2020-p01-") and attempts[1] == "2020_IMO_1.png"
+    assert asyncio.run(service.get(problem)) is not None
+    assert len(attempts) == 1 and attempts[0].startswith("https://img.example.org/renders/imo/imo-2020-p01-")
+
+    async def failing_fetch(_url):
+        raise ImageFetchError("HTTP 404")
+
+    service = image_service(tmp_path, IMAGE_BASE_URL="https://img.example.org")
+    service._fetch = failing_fetch  # type: ignore[method-assign]
+    assert asyncio.run(service.get(problem)) is None  # no fallback to old object names
 
 
 # --------------------------------------------------------------------------- health endpoint
@@ -215,7 +218,7 @@ def test_health_server_starts_and_stops_cleanly():
         urllib.request.urlopen(f"http://127.0.0.1:{server.port}/", timeout=2)
 
 
-def test_database_ping(repo, tmp_path):
+def test_database_ping(repo, tmp_path):  # the repo fixture creates the database file
     assert Database(tmp_path / "db" / "problems.db").ping() is True
 
 
@@ -235,17 +238,16 @@ def test_bot_loads_all_cogs_and_registers_expected_commands(tmp_path, registry):
     names = asyncio.run(go())
     assert {
         "problem",
-        "gimme",
         "random",
         "contests",
         "contest",
-        "info",
         "stats",
         "help",
         "admin",
         "admin status",
         "admin sync",
     } <= names
+    assert not {"gimme", "info"} & names  # pre-2.0 aliases are gone
 
 
 def test_cooldown_policy():
@@ -254,6 +256,39 @@ def test_cooldown_policy():
     assert cooldown_for(BotSettings(), 1).per == 3.0
     assert cooldown_for(BotSettings(command_cooldown=0), 1) is None
     assert cooldown_for(BotSettings(admin_user_ids=frozenset({7})), 7) is None
+
+
+def test_every_kind_of_admin_is_exempt_from_the_cooldown():
+    """COMMAND_COOLDOWN_SECONDS documents "admins exempt": admin roles and the Manage Server
+    fallback count too, not only ADMIN_USER_IDS."""
+    from mathbot.bot.policy import cooldown_for
+
+    by_role = BotSettings(admin_role_ids=frozenset({5}))
+    assert cooldown_for(by_role, 1, [5]) is None
+    assert cooldown_for(by_role, 1, [6], manage_guild=True) is not None  # explicit lists replace the fallback
+    assert cooldown_for(BotSettings(), 1, [], manage_guild=True) is None  # no lists: Manage Server is admin
+    assert cooldown_for(BotSettings(), 1, [], manage_guild=False) is not None
+
+
+def test_bot_does_not_import_the_render_pipeline_or_playwright():
+    """The bot host needs neither Chromium nor the render stack (checked in a fresh interpreter)."""
+    import subprocess
+    import sys
+
+    from mathbot.config import PROJECT_ROOT
+
+    code = (
+        "import sys, mathbot.bot.app\n"
+        "from mathbot.bot.app import COGS\n"
+        "import importlib\n"
+        "[importlib.import_module(c) for c in COGS]\n"
+        "print(sorted(m for m in sys.modules if m.startswith(('playwright', 'mathbot.render.pipeline', "
+        "'mathbot.render.assets', 'mathbot.cli', 'mathbot.sources'))))"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=120, check=True
+    )
+    assert result.stdout.strip() == "[]"
 
 
 def test_official_solution_link_appears_when_stored(repo):

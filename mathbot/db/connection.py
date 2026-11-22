@@ -17,10 +17,6 @@ def iso_utc(when: datetime | None = None) -> str:
     return (when or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def utcnow() -> str:
-    return iso_utc()
-
-
 def connect(path: Path | str) -> sqlite3.Connection:
     """Open a connection, creating the parent directory first."""
     if str(path) != ":memory:":
@@ -56,7 +52,7 @@ def migrate(conn: sqlite3.Connection) -> int:
             conn.execute("BEGIN")
             for statement in _split(sql):
                 conn.execute(statement)
-            conn.execute("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)", (target, utcnow()))
+            conn.execute("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)", (target, iso_utc()))
             conn.execute("COMMIT")
         except sqlite3.Error:
             conn.execute("ROLLBACK")

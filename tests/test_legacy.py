@@ -8,7 +8,7 @@ import pytest
 
 from mathbot.legacy import LEGACY_MARKER, import_legacy, resolve_legacy_contest, strip_legacy_title
 from mathbot.models import EditionRef, ParsedProblem
-from tests.test_db import store
+from tests.conftest import store
 
 ROWS = [
     # AoPS Wiki rows: the old scraper prepended "<h2>{year} {wiki title} Problem {n}</h2>"

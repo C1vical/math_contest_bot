@@ -7,8 +7,8 @@ import pytest
 from mathbot.db import Repository, connect, migrate, open_database
 from mathbot.db.repo import INSERTED, UNCHANGED, UPDATED
 from mathbot.db.schema import LATEST_VERSION
-from mathbot.htmlnorm import normalize_fragment
 from mathbot.models import EditionRef, ParsedProblem
+from tests.conftest import store
 
 URL = "https://example.org/2024_AMC_10A_Problems/Problem_5"
 
@@ -19,12 +19,6 @@ def edition(key="AMC10A", year=2024) -> EditionRef:
 
 def parsed(number=5, html="<p>What is 2 + 2?</p>", **kw) -> ParsedProblem:
     return ParsedProblem(number=number, statement_html=html, source_url=URL, raw_payload=f"<raw>{html}</raw>", **kw)
-
-
-def store(repo, ref, problem, run_id=None) -> str:
-    repo.upsert_edition(ref)
-    content = normalize_fragment(problem.statement_html, problem.source_url)
-    return repo.upsert_problem(ref, problem, content, provider="aops_wiki", run_id=run_id)
 
 
 def test_open_database_creates_missing_directories_and_migrates(tmp_path):

@@ -105,14 +105,23 @@ def create_snapshot(database: Path, out_dir: Path) -> Snapshot:
     created = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     target = out_dir / f"problems-{created}.db"
     tmp = target.with_suffix(".db.tmp")
-    source = sqlite3.connect(f"file:{database.as_posix()}?mode=ro", uri=True)
-    dest = sqlite3.connect(tmp)
     try:
-        source.backup(dest)
-        dest.execute("PRAGMA journal_mode = DELETE")  # a self-contained file with no -wal sidecar
-    finally:
-        dest.close()
-        source.close()
+        source = sqlite3.connect(f"file:{database.as_posix()}?mode=ro", uri=True)
+        try:
+            dest = sqlite3.connect(tmp)
+            try:
+                source.backup(dest)
+                dest.execute("PRAGMA journal_mode = DELETE")  # a self-contained file with no -wal sidecar
+            finally:
+                dest.close()
+        finally:
+            source.close()
+    except sqlite3.Error as exc:
+        tmp.unlink(missing_ok=True)
+        raise SnapshotError(f"cannot copy {database}: {exc}") from exc
+    except BaseException:  # Ctrl+C: leave no partial copy behind
+        tmp.unlink(missing_ok=True)
+        raise
     os.replace(tmp, target)
     version, problems = inspect_database(target)
     return Snapshot(target, _sha256_file(target), target.stat().st_size, version, problems, created)
@@ -135,8 +144,16 @@ def publish_snapshot(snapshot: Snapshot, storage: Storage) -> dict:
 # --------------------------------------------------------------------------- bot host side
 
 
+def _is_url(location: str) -> bool:
+    return urlsplit(location).scheme in {"http", "https"}
+
+
+def _local_path(location: str) -> Path:
+    return Path(location.removeprefix("file://"))
+
+
 def _read(location: str) -> bytes:
-    if urlsplit(location).scheme in {"http", "https"}:
+    if _is_url(location):
         try:
             response = requests.get(location, timeout=DOWNLOAD_TIMEOUT, stream=True)
         except requests.RequestException as exc:
@@ -150,7 +167,7 @@ def _read(location: str) -> bytes:
                 if len(body) > MAX_SNAPSHOT_BYTES:
                     raise SnapshotError(f"{location} is larger than {MAX_SNAPSHOT_BYTES} bytes")
             return bytes(body)
-    path = Path(location[len("file://") :] if location.startswith("file://") else location)
+    path = _local_path(location)
     try:
         return path.read_bytes()
     except OSError as exc:
@@ -159,10 +176,10 @@ def _read(location: str) -> bytes:
 
 def _resolve(pointer_location: str, key: str) -> str:
     """Where the snapshot named by ``key`` lives, relative to the pointer's base location."""
-    if urlsplit(pointer_location).scheme in {"http", "https"}:
-        base = pointer_location[: -len(POINTER_KEY)] if pointer_location.endswith(POINTER_KEY) else pointer_location
+    if _is_url(pointer_location):
+        base = pointer_location.removesuffix(POINTER_KEY)
         return urljoin(base if base.endswith("/") else base + "/", key)
-    pointer = Path(pointer_location[len("file://") :] if pointer_location.startswith("file://") else pointer_location)
+    pointer = _local_path(pointer_location)
     root = pointer.parent.parent if pointer.parent.name == SNAPSHOT_PREFIX else pointer.parent
     return str(root / key)
 

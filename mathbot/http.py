@@ -201,15 +201,35 @@ class DiskCache:
         atomic_write_bytes(meta_path, json.dumps(meta).encode("utf-8"))
 
 
+REPLACE_ATTEMPTS = 6
+REPLACE_RETRY_DELAY = 0.1  # seconds, growing with each attempt (1.5 s in total)
+
+
 def atomic_write_bytes(path: Path, data: bytes) -> None:
     """Write via a temp file + rename so readers never see a partial file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     try:
         tmp.write_bytes(data)
-        os.replace(tmp, path)
+        _replace(tmp, path)
     finally:
         tmp.unlink(missing_ok=True)
+
+
+def _replace(source: Path, target: Path) -> None:
+    """``os.replace``, retried briefly on Windows "Access is denied".
+
+    Antivirus scanners and the search indexer open newly written files for a moment,
+    and Windows refuses to rename a file another process has open.
+    """
+    for attempt in range(1, REPLACE_ATTEMPTS + 1):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if attempt == REPLACE_ATTEMPTS:
+                raise
+            time.sleep(REPLACE_RETRY_DELAY * attempt)
 
 
 # --------------------------------------------------------------------------- client
@@ -227,6 +247,7 @@ def is_challenge(status: int, headers: Mapping[str, str], body: bytes) -> bool:
 
 
 def cache_key(url: str, params: Mapping[str, object] | None) -> str:
+    """The URL with its query parameters in a stable order: the key for caching and logging."""
     if not params:
         return url
     return f"{url}?{urlencode(sorted((k, str(v)) for k, v in params.items()))}"
@@ -256,7 +277,6 @@ class PoliteClient:
         self._robots: dict[str, RobotsRules | None] = {}
         self._robots_lock = threading.Lock()
         self._override_warned: set[str] = set()
-        self.requests_made = 0
 
     # -- public API
 
@@ -328,11 +348,10 @@ class PoliteClient:
         host = urlsplit(url).netloc
         headers = {"User-Agent": self.settings.user_agent, "Accept-Encoding": "gzip, deflate", **extra_headers}
         attempts = self.settings.max_retries + 1
-        last_error: HttpError | None = None
+        last_error: HttpError = TransportError("no request was made", url=url)  # replaced by the first attempt
 
         for attempt in range(1, attempts + 1):
             self._throttle(host)
-            self.requests_made += 1
             try:
                 raw = self._session.get(url, params=params, headers=headers, timeout=self.settings.timeout)
             except (requests.ConnectionError, requests.Timeout) as exc:
@@ -361,7 +380,6 @@ class PoliteClient:
                 )
                 self._sleep(delay)
 
-        assert last_error is not None
         raise last_error
 
     def _check_robots(self, url: str) -> None:

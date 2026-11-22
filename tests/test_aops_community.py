@@ -19,8 +19,8 @@ from mathbot.sources.aops_community import (
     parse_edition_items,
     parse_problem_items,
 )
-from tests.conftest import FixtureClient, read_fixture
-from tests.test_http import AOPS_ROBOTS, FakeSession
+from tests.conftest import FakeSession, FixtureClient, read_fixture
+from tests.test_http import AOPS_ROBOTS
 
 URL = CATEGORY_URL.format(category_id=9000002)
 

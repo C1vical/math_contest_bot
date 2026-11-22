@@ -14,11 +14,10 @@ def test_defaults_need_no_environment():
     assert "Mozilla" not in settings.http.user_agent  # honest UA, no browser impersonation
 
 
-def test_values_are_parsed_and_legacy_channel_id_is_honoured(tmp_path):
+def test_values_are_parsed(tmp_path):
     settings = load_settings(
         {
             "DISCORD_TOKEN": " abc ",
-            "CHANNEL_ID": "111",
             "ALLOWED_CHANNEL_IDS": "222, 333",
             "ADMIN_ROLE_IDS": "9",
             "DATA_DIR": str(tmp_path),
@@ -29,7 +28,7 @@ def test_values_are_parsed_and_legacy_channel_id_is_honoured(tmp_path):
         }
     )
     assert settings.bot.token == "abc"
-    assert settings.bot.allowed_channel_ids == {111, 222, 333}
+    assert settings.bot.allowed_channel_ids == {222, 333}
     assert settings.bot.admin_role_ids == {9}
     assert settings.database_path == Path(tmp_path) / "problems.db"
     assert settings.bot.health_port == 9000 and settings.bot.sync_commands is False
@@ -40,7 +39,7 @@ def test_values_are_parsed_and_legacy_channel_id_is_honoured(tmp_path):
 @pytest.mark.parametrize(
     "env, fragment",
     [
-        ({"CHANNEL_ID": "general"}, "CHANNEL_ID"),
+        ({"ALLOWED_CHANNEL_IDS": "general"}, "ALLOWED_CHANNEL_IDS"),
         ({"PORT": "eighty"}, "PORT"),
         ({"PORT": "0"}, "PORT"),
         ({"SYNC_COMMANDS": "maybe"}, "SYNC_COMMANDS"),
@@ -77,3 +76,12 @@ def test_no_secrets_or_bucket_urls_are_hard_coded():
         if "r2.dev" in text or "aops_session_id" in text:
             offenders.append(path.name)
     assert offenders == []
+
+
+def test_optional_ids_and_object_keys():
+    settings = load_settings({"GUILD_ID": "123", "S3_KEY_PREFIX": "/renders/"})
+    assert settings.bot.guild_id == 123 and settings.bot.announce_channel_id is None
+    assert settings.storage.object_key("imo/a.png") == "renders/imo/a.png"
+    assert load_settings({}).storage.object_key("imo/a.png") == "imo/a.png"
+    with pytest.raises(ConfigError, match="GUILD_ID"):
+        load_settings({"GUILD_ID": "my server"})

@@ -17,7 +17,7 @@ from mathbot.snapshot import (
     inspect_database,
     publish_snapshot,
 )
-from tests.test_render import add_problem
+from tests.conftest import add_problem
 
 
 @pytest.fixture
@@ -113,3 +113,27 @@ def test_bot_startup_falls_back_to_the_local_database(tmp_path):
     settings.database_path.write_bytes(b"local copy")
     install_snapshot(settings)  # logs a warning and keeps the local copy
     assert settings.database_path.read_bytes() == b"local copy"
+
+
+def test_a_file_that_is_not_a_database_is_a_snapshot_error_and_leaves_no_partial_copy(tmp_path):
+    junk = tmp_path / "problems.db"
+    junk.write_bytes(b"x" * 4096)
+    with pytest.raises(SnapshotError, match="cannot copy"):
+        create_snapshot(junk, tmp_path / "snapshots")
+    assert list((tmp_path / "snapshots").iterdir()) == []
+
+
+def test_publish_db_reports_a_storage_failure_instead_of_crashing(tmp_path, monkeypatch, capsys):
+    import argparse
+
+    from mathbot.cli import database as cli_database
+    from mathbot.render import storage as storage_module
+
+    class Unreachable(LocalStorage):
+        def put(self, key, data, content_type, *, cache_control=None):
+            raise storage_module.StorageError("bucket unreachable")
+
+    settings = load_settings({"DATA_DIR": str(tmp_path)})
+    monkeypatch.setattr(storage_module, "build_storage", lambda _settings: Unreachable(tmp_path / "bucket"))
+    assert cli_database.cmd_publish_db(argparse.Namespace(dry_run=False), settings) == 1
+    assert "bucket unreachable" in capsys.readouterr().err

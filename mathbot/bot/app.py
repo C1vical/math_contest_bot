@@ -28,6 +28,8 @@ COGS = (
 
 
 class MathBot(commands.Bot):
+    """The Discord client: settings, registry, database access and image delivery for the cogs."""
+
     def __init__(self, settings: Settings, registry: ContestRegistry, health: HealthState) -> None:
         # Slash commands only: no privileged intents, and the prefix is never matched.
         super().__init__(command_prefix=commands.when_mentioned, intents=discord.Intents.default(), help_command=None)
@@ -35,7 +37,7 @@ class MathBot(commands.Bot):
         self.registry = registry
         self.health = health
         self.db = Database(settings.database_path)
-        self.images = ImageService(settings, self.db, registry)
+        self.images = ImageService(settings, self.db)
         self._announced = False
         self.tree.on_error = self.on_app_command_error  # type: ignore[method-assign]
 
@@ -152,8 +154,9 @@ def run_bot(settings: Settings) -> int:
 
     conn = open_database(settings.database_path)  # creates data/ and applies migrations
     try:
-        Repository(conn).sync_registry(registry)
-        problems = Repository(conn).totals()["problems"]
+        repo = Repository(conn)
+        repo.sync_registry(registry)
+        problems = repo.totals()["problems"]
     finally:
         conn.close()
     if problems == 0:

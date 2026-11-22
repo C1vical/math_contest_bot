@@ -1,4 +1,4 @@
-"""/problem, /gimme and /random."""
+"""/problem and /random, plus the "Show answer" button."""
 
 from __future__ import annotations
 
@@ -55,25 +55,7 @@ class Problems(commands.Cog):
             f"{year} **{series.name}** has no problem {number}.\nAvailable problems: {compress_years(numbers)}",
         )
 
-    async def _problem(self, interaction: discord.Interaction, contest: str, year: int, number: int) -> None:
-        series = self.bot.registry.resolve(contest)
-        if series is None:
-            await self._unknown_contest(interaction, contest)
-            return
-        # The lookup is a local, indexed query, so it runs before deferring: that keeps
-        # "not found" replies ephemeral (a follow-up to a public defer cannot be).
-        problem = await self.bot.db.call(lambda repo: repo.get_problem(series.key, year, number))
-        if problem is None:
-            embed = await self._explain_missing(series, year, number)
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-        await interaction.response.defer(thinking=True)  # image delivery may be slow
-        await self._send(interaction, problem)
-
     # ------------------------------------------------------------------ autocomplete
-
-    async def contest_autocomplete(self, interaction: discord.Interaction, current: str):
-        return ui.contest_choices(self.bot.registry, current)
 
     async def contest_or_family_autocomplete(self, interaction: discord.Interaction, current: str):
         return ui.contest_choices(self.bot.registry, current, families=True)
@@ -94,7 +76,7 @@ class Problems(commands.Cog):
         year="Contest year, e.g. 2024",
         number="Problem number",
     )
-    @app_commands.autocomplete(contest=contest_autocomplete, year=year_autocomplete)
+    @app_commands.autocomplete(contest=ui.contest_autocomplete, year=year_autocomplete)
     @allowed_here()
     @per_user_cooldown()
     async def problem(
@@ -104,25 +86,19 @@ class Problems(commands.Cog):
         year: app_commands.Range[int, 1900, 2100],
         number: app_commands.Range[int, 1, 60],
     ) -> None:
-        await self._problem(interaction, contest, year, number)
-
-    @app_commands.command(name="gimme", description="Show a specific contest problem (same as /problem)")
-    @app_commands.describe(
-        year="Contest year, e.g. 2024",
-        contest="Contest name, e.g. AMC10A",
-        question_number="Problem number",
-    )
-    @app_commands.autocomplete(contest=contest_autocomplete)
-    @allowed_here()
-    @per_user_cooldown()
-    async def gimme(
-        self,
-        interaction: discord.Interaction,
-        year: app_commands.Range[int, 1900, 2100],
-        contest: str,
-        question_number: app_commands.Range[int, 1, 60],
-    ) -> None:
-        await self._problem(interaction, contest, year, question_number)
+        series = self.bot.registry.resolve(contest)
+        if series is None:
+            await self._unknown_contest(interaction, contest)
+            return
+        # The lookup is a local, indexed query, so it runs before deferring: that keeps
+        # "not found" replies ephemeral (a follow-up to a public defer cannot be).
+        problem = await self.bot.db.call(lambda repo: repo.get_problem(series.key, year, number))
+        if problem is None:
+            embed = await self._explain_missing(series, year, number)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)  # image delivery may be slow
+        await self._send(interaction, problem)
 
     @app_commands.command(name="random", description="Show a random problem, optionally filtered")
     @app_commands.describe(

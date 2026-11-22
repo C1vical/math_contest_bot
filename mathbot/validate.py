@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from mathbot.db.repo import Repository
+from mathbot.htmlnorm import MIN_TEXT_CHARS
 
 ERROR, WARNING = "error", "warning"
 # "(A)", "(\mathrm{A})", "\mathrm{(A)}", "\textbf{(A) }" ... as they appear in statement text.
@@ -74,6 +75,7 @@ def amc_problems_without_choices(conn: sqlite3.Connection) -> list[tuple[str, st
 
 
 def validate(repo: Repository, renders_dir: Path, renderer_version: str) -> ValidationReport:
+    """Run every integrity check; errors mean the data is wrong, warnings that work is pending."""
     conn = repo.conn
     report = ValidationReport()
     add = lambda severity, check, message: report.findings.append(Finding(severity, check, message))  # noqa: E731
@@ -88,9 +90,10 @@ def validate(repo: Repository, renders_dir: Path, renderer_version: str) -> Vali
     for row in conn.execute(
         """
         SELECT id FROM problems
-        WHERE (length(trim(statement_html)) = 0 OR length(trim(statement_text)) < 5)
+        WHERE (length(trim(statement_html)) = 0 OR length(trim(statement_text)) < ?)
           AND instr(statement_html, '<img') = 0
-        """
+        """,
+        (MIN_TEXT_CHARS,),
     ):
         add(ERROR, "empty-statement", row["id"])
 
@@ -146,7 +149,7 @@ def validate(repo: Repository, renders_dir: Path, renderer_version: str) -> Vali
             not_uploaded += 1
 
     last = repo.last_run()
-    if last is not None and last["status"] not in {"completed"}:
+    if last is not None and last["status"] != "completed":
         add(WARNING, "last-ingestion", f"run {last['id']} ended with status {last['status']} ({last['failed']} failed)")
 
     report.summary = {

@@ -32,12 +32,12 @@ ingesting a partial contest. Edition category ids from the pre-2.0 manifest
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import re
 
 from mathbot.contests import AOPS_COMMUNITY, ContestSeries
+from mathbot.htmlnorm import sha256_text
 from mathbot.http import HttpError, PoliteClient, SourceBlockedError
 from mathbot.models import EditionRef, EditionResult, KnownEdition, ParsedProblem, ProblemFailure
 from mathbot.sources.base import load_manifest
@@ -99,6 +99,7 @@ def find_category(data: object, category_id: int) -> dict:
 
 
 def parse_category_page(page_html: str, category_id: int) -> dict:
+    """The category object for ``category_id`` from a category page."""
     return find_category(extract_bootstrap(page_html), category_id)
 
 
@@ -165,7 +166,7 @@ def parse_problem_items(category: dict, source_url: str) -> tuple[list[ParsedPro
                 raw_payload=json.dumps(item, sort_keys=True, ensure_ascii=False),
                 source_url=url,
                 source_identifier=str(post_id or item.get("item_id") or ""),
-                source_revision=hashlib.sha256(rendered.encode("utf-8")).hexdigest(),
+                source_revision=sha256_text(rendered),
             )
         )
 
@@ -255,7 +256,7 @@ class AopsCommunityAdapter:
             return result
 
         payload = json.dumps(category.get("items") or [], sort_keys=True, ensure_ascii=False)
-        result.source_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        result.source_hash = sha256_text(payload)
         if known is not None and known.source_hash == result.source_hash:
             result.unchanged = True
             return result

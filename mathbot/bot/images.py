@@ -4,9 +4,8 @@ Lookup order for a problem's picture:
 
 1. the local file recorded in the render manifest (development, or a host that
    renders on the same disk);
-2. ``IMAGE_BASE_URL/<object key>`` for the current render;
-3. ``IMAGE_BASE_URL/<year>_<contest>_<n>.png`` - the pre-2.0 key, so a bucket
-   filled by the old bot keeps working (``IMAGE_LEGACY_KEYS=false`` disables it).
+2. ``IMAGE_BASE_URL/<object key>`` for the current render (object storage,
+   when the bot runs on another machine than the renderer).
 
 Remote fetches have a timeout and validate status, content type, size and the
 PNG signature; anything else is treated as "no image", never sent to Discord.
@@ -23,9 +22,8 @@ import aiohttp
 
 from mathbot.bot.services import Database
 from mathbot.config import Settings
-from mathbot.contests import ContestRegistry, legacy_image_key
 from mathbot.db.repo import ProblemRow
-from mathbot.render.pipeline import PNG_SIGNATURE
+from mathbot.render import PNG_SIGNATURE
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +37,7 @@ class ImageFetchError(Exception):
 
 
 def validate_image_response(status: int, content_type: str, data: bytes) -> None:
+    """Raise :class:`ImageFetchError` unless the response is a PNG small enough for Discord."""
     if status != 200:
         raise ImageFetchError(f"HTTP {status}")
     if not content_type.lower().startswith("image/"):
@@ -50,10 +49,11 @@ def validate_image_response(status: int, content_type: str, data: bytes) -> None
 
 
 class ImageService:
-    def __init__(self, settings: Settings, db: Database, registry: ContestRegistry) -> None:
+    """Finds the current picture of a problem, with a small in-memory LRU cache."""
+
+    def __init__(self, settings: Settings, db: Database) -> None:
         self.settings = settings
         self.db = db
-        self.registry = registry
         self._session: aiohttp.ClientSession | None = None
         self._cache: OrderedDict[str, bytes] = OrderedDict()
 
@@ -68,12 +68,9 @@ class ImageService:
             self._cache.popitem(last=False)
         return data
 
-    async def _fetch(self, key: str) -> bytes:
-        base = self.settings.storage.public_base_url
-        assert base is not None
+    async def _fetch(self, url: str) -> bytes:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession(timeout=FETCH_TIMEOUT)
-        url = f"{base}/{key}"
         try:
             async with self._session.get(url) as response:
                 data = await response.content.read(MAX_IMAGE_BYTES + 1)
@@ -96,23 +93,15 @@ class ImageService:
             if data is not None:
                 return self._remember(cache_key, data)
 
-        if not self.settings.storage.public_base_url:
+        base_url = self.settings.storage.public_base_url
+        if not base_url or render is None or not render["object_key"]:
             return None
-
-        keys: list[str] = []
-        if render is not None and render["object_key"]:
-            prefix = f"{self.settings.storage.key_prefix}/" if self.settings.storage.key_prefix else ""
-            keys.append(f"{prefix}{render['object_key']}")
-        series = self.registry.resolve(problem.series_key, include_disabled=True)
-        if self.settings.storage.legacy_keys and series is not None:
-            keys.append(legacy_image_key(series, problem.year, problem.number))
-
-        for key in keys:
-            try:
-                return self._remember(cache_key, await self._fetch(key))
-            except ImageFetchError as exc:
-                log.warning("image fetch failed", extra={"problem": problem.id, "key": key, "error": str(exc)})
-        return None
+        url = f"{base_url}/{self.settings.storage.object_key(render['object_key'])}"
+        try:
+            return self._remember(cache_key, await self._fetch(url))
+        except ImageFetchError as exc:
+            log.warning("image fetch failed", extra={"problem": problem.id, "url": url, "error": str(exc)})
+            return None
 
 
 def _read_png(path: Path) -> bytes | None:

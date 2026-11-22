@@ -1,7 +1,3 @@
-# Exact versions resolved from requirements-dev.txt for Python 3.10+ on every platform.
-# Regenerate after changing requirements-dev.txt:
-#   python -m uv pip compile requirements-dev.txt --universal --python-version 3.10 --no-header -o requirements-dev.lock
-# Install for development / CI: pip install -r requirements-dev.lock
 aiohappyeyeballs==2.7.1
     # via aiohttp
 aiohttp==3.14.5
@@ -27,13 +23,19 @@ botocore==1.44.4
     #   boto3
     #   s3transfer
 certifi==2026.10.23
-    # via requests
+    # via
+    #   curl-cffi
+    #   requests
+cffi==2.1.1
+    # via curl-cffi
 charset-normalizer==3.5.2
     # via requests
 click==8.5.1
     # via flask
 colorama==0.4.6 ; sys_platform == 'win32'
     # via pytest
+curl-cffi==0.17.0
+    # via -r requirements.txt
 discord-py==2.7.1
     # via -r requirements.txt
 exceptiongroup==1.3.1 ; python_full_version < '3.11'
@@ -89,6 +91,10 @@ propcache==0.5.4
     # via
     #   aiohttp
     #   yarl
+pycparser==3.11 ; python_full_version < '3.11' and implementation_name != 'PyPy'
+    # via cffi
+pycparser==3.12 ; python_full_version >= '3.11' and implementation_name != 'PyPy'
+    # via cffi
 pygments==2.21.0
     # via pytest
 pytest==9.2.0

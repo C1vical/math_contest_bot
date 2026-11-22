@@ -53,7 +53,7 @@ rejected at startup with the variable's name in the error.
 | Variable | Purpose |
 |---|---|
 | `DISCORD_TOKEN` | Bot token. Only needed by `python -m mathbot bot`. |
-| `ALLOWED_CHANNEL_IDS`, `ALLOWED_ROLE_IDS` | Restrict where and by whom commands work. Empty means no restriction. The old `CHANNEL_ID` is still honoured. |
+| `ALLOWED_CHANNEL_IDS`, `ALLOWED_ROLE_IDS` | Restrict where and by whom commands work. Empty means no restriction. |
 | `ADMIN_ROLE_IDS`, `ADMIN_USER_IDS` | Who may use `/admin`. If both are empty, members with **Manage Server** are admins. |
 | `GUILD_ID` | Sync slash commands to one server instantly instead of globally. |
 | `ANNOUNCE_CHANNEL_ID` | Post "online" once per process start (not on every reconnect). |
@@ -64,7 +64,7 @@ rejected at startup with the variable's name in the error.
 | `ASSET_MIN_INTERVAL` | Seconds between statement-image downloads (default 1), separate from page scraping. |
 | `STORAGE_BACKEND`, `S3_*`, `IMAGE_BASE_URL` | Where rendered images and database snapshots are published and fetched from. |
 | `DATABASE_SNAPSHOT_URL` | Bot host: install the newest published database at startup (see [Deploying](#deploying)). |
-| `COMMAND_COOLDOWN_SECONDS` | Per-user pause between `/problem`, `/gimme`, `/random` (default 3, `0` disables, admins exempt). |
+| `COMMAND_COOLDOWN_SECONDS` | Per-user pause between `/problem` and `/random` (default 3, `0` disables, admins exempt). |
 
 The contest registry lives in [mathbot/contests.py](mathbot/contests.py): every
 series has a canonical key (`AMC10A`), a display name, the exact name the source
@@ -188,6 +188,8 @@ python -m mathbot cleanup --remote       # also delete superseded objects from t
   `renders` table, so unchanged problems are never rendered twice, and a corrected
   statement or a template change (`TEMPLATE_VERSION` in
   [mathbot/render/template.py](mathbot/render/template.py)) is picked up automatically.
+  The previous renderer's image stays in use until the new one exists; only then does
+  `cleanup` delete it. A failed render never takes an image away.
 - Paths are deterministic and include the hash, e.g.
   `pascal/pascal-2019-p03-423bd5e391b5-r6-w1000-s2.png`, so a new render never
   overwrites the one currently being served.
@@ -233,7 +235,7 @@ ASSET_MIN_INTERVAL=1.0                                # seconds between image do
 python -m mathbot prefetch-assets --count             # how many images, how long
 python -m mathbot prefetch-assets --limit 2000        # resumable batches; Ctrl+C is safe
 python -m mathbot render                              # downloads anything still missing, then renders
-python -m mathbot cleanup                             # removes renders from the previous renderer
+python -m mathbot cleanup                             # removes previous-renderer images once replaced
 python -m mathbot coverage
 ```
 
@@ -245,10 +247,27 @@ python -m mathbot coverage
   `render` alone also works, but it can't be stopped and resumed in batches.
 - Renders made before this change (formulas typeset from TeX) stay in use until
   `render` replaces them; `cleanup` then deletes them.
-- The override never touches anti-bot challenge detection. The 68 images hosted on
-  the AoPS wiki itself (`artofproblemsolving.com`, behind a Cloudflare challenge)
-  stay unavailable, and so does one image on `cdn.artofproblemsolving.com`, whose
-  robots.txt disallows it.
+- The override never touches anti-bot challenge detection. Images hosted on the AoPS
+  wiki itself (`artofproblemsolving.com/wiki/images/...`, behind a Cloudflare
+  challenge) are never downloaded by the pipeline, and neither is one image on
+  `cdn.artofproblemsolving.com`, whose robots.txt disallows it. Add those yourself
+  (below).
+
+#### Images you save yourself
+
+For images the pipeline can't download (73 files, used by 69 problems, as of
+2026-11-17), open them in your own browser and import them:
+
+```bash
+python -m mathbot import-assets --html images.html   # a page linking every image still needed
+# open images.html, save each image into one folder, keeping its file name
+python -m mathbot import-assets path/to/folder       # matched by file name, validated as images
+python -m mathbot render
+```
+
+Imported images are checked by their bytes (a saved challenge page is rejected), are
+never downloaded again and don't expire. `import-assets` with no arguments prints
+the list.
 
 Measured on 2026-11-17 before the AoPS images were downloaded (8,880 problems:
 1,247 live CEMC + 7,633 imported AoPS): **7,745 with an image (87%)**. The rest:
@@ -263,7 +282,8 @@ Measured on 2026-11-17 before the AoPS images were downloaded (8,880 problems:
 
 Expected once the images are downloaded: about 8,811 of 8,880 (99%), all but the 68
 challenge-blocked wiki images and the one `cdn.artofproblemsolving.com` image, less
-any image AoPS no longer serves.
+any image AoPS no longer serves. With those 69 problems' images imported by hand,
+all 8,880.
 
 Common LaTeX that MathJax lacks (`\emph`, `\hdots`, `\textdollar`, `tabular`,
 layout-only commands, ...) is mapped to MathJax equivalents in
@@ -271,7 +291,7 @@ layout-only commands, ...) is mapped to MathJax equivalents in
 
 - One Chromium instance with a fixed pool of pages (`RENDER_CONCURRENCY`). Each page
   waits for MathJax, fonts, every image and two animation frames before the
-  screenshot. Output is checked to be a complete PNG of plausible size and written
+  screenshot, for at most `RENDER_TIMEOUT_MS`. Output is checked to be a complete PNG of plausible size and written
   atomically. Failures are retried (`RENDER_RETRIES`) and then recorded per problem.
 
 **Storage.** `upload` is a separate step from rendering.
@@ -287,8 +307,7 @@ layout-only commands, ...) is mapped to MathJax equivalents in
   public URL (r2.dev or a custom domain). Objects are uploaded as immutable.
 
 The bot looks for an image in this order: the local render file, then
-`IMAGE_BASE_URL/<object key>`, then the pre-2.0 name `IMAGE_BASE_URL/<year>_<contest>_<n>.png`
-(so an existing bucket keeps working; set `IMAGE_LEGACY_KEYS=false` to stop).
+`IMAGE_BASE_URL/<object key>`.
 Remote fetches use a 15 s timeout and check status, content type, size and PNG
 signature. If there is no valid image, the bot shows the problem as text and says so.
 
@@ -304,10 +323,9 @@ starts the health server and then connects. Slash commands:
 | Command | What it does |
 |---|---|
 | `/problem contest year number` | A specific problem. Contest autocompletes; years autocomplete from the database. |
-| `/gimme year contest question_number` | Same as `/problem`, kept from the old bot. |
 | `/random [contest] [year] [number] [source]` | Random problem; `contest` may be a family such as `PCF`. |
 | `/contests` | Every contest with years and counts, paginated. |
-| `/contest contest`, `/info contest` | Years available, format, aliases. |
+| `/contest contest` | Years available, format, aliases. |
 | `/stats` | Totals by source and largest contests. |
 | `/help [command]` | Help. |
 | `/admin status`, `/admin sync` | Admin only: validation summary and last ingestion run; re-sync commands. |
@@ -347,8 +365,9 @@ swaps it in atomically. The previous file is kept as `problems.db.prev`. If the
 download fails, it keeps using the database it has. `python -m mathbot pull-db`
 does the same by hand. A single machine that does everything needs none of this.
 
-The snapshot is the full database, provenance included: with all 8,700 problems
-it is about 170 MB, half of it statement history and raw source payloads. The bot
+The snapshot is the full database, provenance included: with all 8,880 problems
+it is about 210 MB (measured 2026-11-17), half of it statement history and raw
+source payloads. The bot
 host downloads it only when `latest.json` changes.
 
 **Scheduled refresh.** [.github/workflows/refresh.yml](.github/workflows/refresh.yml)
@@ -395,8 +414,8 @@ links to it. Use this for study groups, not for republishing.
 **What was verified on 2026-11-17**, with plain HTTP and an honest User-Agent:
 
 - **CEMC.** robots.txt allows the listing and the document pages. The listing at
-  `/resources/past-contests` filters on `contest_category` (14 = PCF, 24 = Euclid,
-  25 = FGH, 13 = Gauss) and paginates with `page=N` (10 rows per page; a page past
+  `/resources/past-contests` filters on `contest_category` (14 = PCF, 23 = CIMC/CSMC,
+  24 = Euclid, 25 = FGH, 13 = Gauss) and paginates with `page=N` (10 rows per page; a page past
   the end is HTTP 200 with no rows). The listing's year filter only offers
   2016-2026, and every listed contest has both HTML and PDF. Earlier years are not
   listed in any format, so there is no PDF backlog to extract. Constructing guessed
@@ -436,26 +455,30 @@ until their category data has been checked against the live site.
 
 ```bash
 pip install -r requirements-dev.lock
-pytest                      # offline; uses fixtures only
+pytest                                       # offline; uses fixtures only
 ruff check . && ruff format --check .
+python -m compileall -q mathbot tests main.py
+vulture mathbot tests --min-confidence 80    # dead code
 ```
 
-Tests marked `browser` use a real Chromium and the pinned render assets. They
-check that TeX renders offline, that the AoPS formula fallback is typeset, and that
-remote requests and TeX errors fail a render. Dead-code check:
-`vulture mathbot tests --min-confidence 80`. They are skipped when Chromium or the
-assets are not installed. CI ([.github/workflows/ci.yml](.github/workflows/ci.yml))
-runs a syntax check, ruff and the offline tests on Python 3.10 and 3.13, plus a
-separate job that installs Chromium and the assets and runs the browser tests.
+Tests marked `browser` use a real Chromium and the pinned render assets (from
+`RENDER_ASSETS_DIR`, default `data/render_assets`). They check that TeX renders
+offline, that the AoPS formula fallback is typeset, and that remote requests and
+TeX errors fail a render. They are skipped when Chromium or the assets are not
+installed. CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs a syntax
+check, ruff, vulture and the offline tests on Python 3.10 and 3.13, plus a separate
+job that installs Chromium and the assets and runs the browser tests.
 
 Layout:
 
 ```
 mathbot/
   config.py          typed settings from the environment
+  logging_setup.py   log format with key=value context
   contests.py        contest registry, aliases, deterministic IDs
+  models.py          data passed between sources, ingestion and the database
   http.py            polite client: robots.txt, rate limit, retries, cache
-  htmlnorm.py        sanitizing + hashing of statements
+  htmlnorm.py        sanitizing + hashing of statements, remote image URLs
   sources/           cemc.py, aops_wiki.py, aops_community.py (+ seed manifests)
   ingest.py          discover -> fetch -> normalize -> upsert -> report
   db/                schema migrations, connection, repository
@@ -465,7 +488,9 @@ mathbot/
   snapshot.py        publish-db / pull-db
   validate.py        integrity checks
   coverage.py        what is missing (python -m mathbot coverage)
-  cli.py             python -m mathbot ...
+  cli/               python -m mathbot ...: ingest.py (getting problems), images.py
+                     (downloading, rendering, publishing images), database.py
+                     (validate, coverage, snapshots), common.py (shared helpers)
   bot/               app startup, health, policy, images, ui, cogs/
 main.py              python main.py runs the bot (same as python -m mathbot bot)
 ```

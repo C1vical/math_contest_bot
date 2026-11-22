@@ -217,7 +217,7 @@ def test_http_error_on_one_problem_does_not_abort_the_edition(registry):
 
 def test_expected_count_is_used_when_the_edition_page_lists_nothing(registry):
     route = wiki_route({("parse", "2099_AMC_10A_Problems"): json.dumps({"parse": {"title": "x", "links": []}})})
-    adapter = AopsWikiAdapter(FixtureClient(route), fetch_answers=False)
+    adapter = AopsWikiAdapter(FixtureClient(route))
     series, edition = edition_2099(adapter, registry)
     result = adapter.fetch_edition(series, edition)
     assert len(result.problems) + len(result.failures) == 25  # every expected number is accounted for

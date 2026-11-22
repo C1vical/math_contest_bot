@@ -16,9 +16,12 @@ COLOR = discord.Color.blue()
 ERROR_COLOR = discord.Color.red()
 ANSWER_PREFIX = "mathbot:answer:"
 MAX_CHOICES = 25  # Discord's autocomplete limit
+MAX_LABEL_CHARS = 100  # Discord's limit for an autocomplete entry's name
+MAX_STATEMENT_CHARS = 3900  # text fallback, under Discord's 4096-character embed description limit
 
 
 def error_embed(title: str, description: str) -> discord.Embed:
+    """A red embed for a reply that explains what went wrong."""
     return discord.Embed(title=title, description=description, color=ERROR_COLOR)
 
 
@@ -48,15 +51,20 @@ def contest_choices(
         for family, members in registry.families().items():
             if len(members) > 1 and (not needle or needle in normalize_alias(family)):
                 label = f"{family} - all of {FAMILY_NAMES.get(family, family)}"
-                choices.append(app_commands.Choice(name=label[:100], value=family))
+                choices.append(app_commands.Choice(name=label[:MAX_LABEL_CHARS], value=family))
     for series in registry.all():
         names = (series.key, series.name, *series.aliases)
         if not needle or any(needle in normalize_alias(name) for name in names):
             label = series.key if normalize_alias(series.name) == series.key else f"{series.key} - {series.name}"
-            choices.append(app_commands.Choice(name=label[:100], value=series.key))
+            choices.append(app_commands.Choice(name=label[:MAX_LABEL_CHARS], value=series.key))
     # Exact / prefix matches first so "AMC10" offers AMC10 before AMC10A.
     choices.sort(key=lambda c: (normalize_alias(c.value) != needle, not normalize_alias(c.value).startswith(needle)))
     return choices[:MAX_CHOICES]
+
+
+async def contest_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    """Autocomplete callback for a ``contest`` option that takes one series (shared by the cogs)."""
+    return contest_choices(interaction.client.registry, current)  # type: ignore[attr-defined]
 
 
 def problem_embed(problem: ProblemRow, *, has_image: bool) -> discord.Embed:
@@ -66,7 +74,7 @@ def problem_embed(problem: ProblemRow, *, has_image: bool) -> discord.Embed:
         embed.set_image(url="attachment://problem.png")
     else:
         text = problem.statement_text
-        embed.description = (text[:3900] + " ...") if len(text) > 3900 else text
+        embed.description = (text[:MAX_STATEMENT_CHARS] + " ...") if len(text) > MAX_STATEMENT_CHARS else text
         embed.add_field(
             name="Image unavailable",
             value="This problem has not been rendered yet, so the text version is shown. "
@@ -100,6 +108,7 @@ def problem_view(problem: ProblemRow) -> discord.ui.View:
 
 
 def problem_file(data: bytes) -> discord.File:
+    """The PNG as the ``problem.png`` attachment that problem_embed refers to."""
     return discord.File(io.BytesIO(data), filename="problem.png")
 
 
@@ -149,6 +158,7 @@ class Paginator(discord.ui.View):
 
 
 async def send_paginated(interaction: discord.Interaction, pages: list[discord.Embed]) -> None:
+    """Reply with ``pages``, adding Previous / Next buttons when there is more than one."""
     if len(pages) == 1:
         await interaction.response.send_message(embed=pages[0])
         return

@@ -1,6 +1,6 @@
 import pytest
 
-from mathbot.htmlnorm import InvalidContentError, extract_text, normalize_fragment
+from mathbot.htmlnorm import InvalidContentError, extract_text, normalize_fragment, remote_images
 
 BASE = "https://artofproblemsolving.com/wiki/index.php/Some_Page"
 
@@ -14,10 +14,10 @@ def test_urls_become_absolute_and_latex_alt_survives():
     assert 'src="https://latex.artofproblemsolving.com/a/b.png"' in content.html
     assert 'src="https://artofproblemsolving.com/wiki/images/diagram.png"' in content.html
     assert 'alt="$x^2=4$"' in content.html
-    assert content.image_urls == (
+    assert remote_images(content.html) == [
         "https://latex.artofproblemsolving.com/a/b.png",
         "https://artofproblemsolving.com/wiki/images/diagram.png",
-    )
+    ]
     assert content.text == "Solve $x^2=4$ now. [image: A square]"
 
 
@@ -39,7 +39,7 @@ def test_mathjax_tex_and_data_uris_are_left_alone():
     content = normalize_fragment(fragment, "https://cemc.uwaterloo.ca/x.html")
     assert "\\(x&gt;0\\)" in content.html
     assert 'src="data:image/png;base64,AAAA"' in content.html
-    assert content.image_urls == ()
+    assert remote_images(content.html) == []
     assert "\\(x>0\\)" in content.text
 
 

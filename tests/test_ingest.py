@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from mathbot.contests import AOPS_COMMUNITY, AOPS_WIKI, CEMC
@@ -229,3 +231,26 @@ def test_discover_only_lists_editions_without_writing(repo, registry):
 def test_unknown_mode_is_rejected(repo, registry):
     with pytest.raises(ValueError):
         Ingestor(repo, fixture_adapters()).run([registry.get("EUCLID")], mode="yolo")
+
+
+def test_ctrl_c_stops_fetching_the_editions_still_queued(repo, registry):
+    """Leaving the thread pool normally waits for every queued edition; an interrupt must not."""
+    years = list(range(2016, 2021))
+    statements = {year: {1: f"<p>Problem of {year}.</p>"} for year in years}
+
+    class SlowAdapter(StubAdapter):
+        def fetch_edition(self, series, edition, **options):
+            if edition.year != years[0]:
+                time.sleep(0.2)  # still busy when the first result interrupts the run
+            return super().fetch_edition(series, edition, **options)
+
+    def progress(message):
+        if "stored" in message:
+            raise KeyboardInterrupt
+
+    adapter = SlowAdapter(statements)
+    ingestor = Ingestor(repo, {AOPS_WIKI: adapter}, concurrency=1, progress=progress)
+    with pytest.raises(KeyboardInterrupt):
+        ingestor.run([registry.get("IMO")])
+    assert len(adapter.fetched) <= 2  # the edition stored, plus at most the one already in flight
+    assert repo.last_run()["status"] == "failed"

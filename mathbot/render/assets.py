@@ -26,6 +26,7 @@ from bs4 import BeautifulSoup
 
 from mathbot.db.connection import iso_utc
 from mathbot.db.repo import Repository
+from mathbot.htmlnorm import is_remote_url
 from mathbot.http import (
     RETRY_STATUSES,
     HttpError,
@@ -35,6 +36,7 @@ from mathbot.http import (
     TransportError,
     atomic_write_bytes,
 )
+from mathbot.render import PNG_SIGNATURE
 
 log = logging.getLogger(__name__)
 
@@ -44,7 +46,7 @@ TEMPORARY_FAILURE_TTL = 3600.0  # network errors / 5xx are retried after an hour
 TEMPORARY = "temporary: "  # prefix of a stored error that may succeed on retry
 _ROBOTS_REFUSAL = "robots.txt "  # stored by earlier versions; never treated as a cached failure
 _SIGNATURES = (
-    (b"\x89PNG\r\n\x1a\n", "image/png", ".png"),
+    (PNG_SIGNATURE, "image/png", ".png"),
     (b"\xff\xd8\xff", "image/jpeg", ".jpg"),
     (b"GIF87a", "image/gif", ".gif"),
     (b"GIF89a", "image/gif", ".gif"),
@@ -81,14 +83,13 @@ def sniff_image(data: bytes, declared_type: str = "") -> tuple[str, str]:
     raise AssetError(f"not a recognised image (declared content type: {declared_type or 'none'})")
 
 
-def remote_images(html: str) -> list[str]:
-    """Distinct http(s) image URLs in ``html``, in document order."""
-    soup = BeautifulSoup(html, "html.parser")
-    urls = [img.get("src") for img in soup.find_all("img")]
-    return list(dict.fromkeys(u for u in urls if isinstance(u, str) and u.startswith(("http://", "https://"))))
+def _iso_after(seconds: float) -> str:
+    return iso_utc(datetime.now(timezone.utc) + timedelta(seconds=seconds))
 
 
 class AssetCache:
+    """Downloaded statement images, stored under ``root`` by SHA-256 and recorded in ``assets``."""
+
     def __init__(self, repo: Repository, client: PoliteClient, root: Path, ttl: float) -> None:
         self.repo = repo
         self.client = client
@@ -122,26 +123,33 @@ class AssetCache:
 
         try:
             response = self.client.get(url, use_cache=False)
-            data = response.content
-            if not data:
-                raise AssetError("empty response body")
-            if len(data) > MAX_ASSET_BYTES:
-                raise AssetError(f"image is {len(data)} bytes, over the {MAX_ASSET_BYTES} byte limit")
-            content_type, extension = sniff_image(data, response.headers.get("content-type", ""))
+            return self.store(url, response.content, response.headers.get("content-type", ""))
         except RobotsDisallowedError as exc:
             raise AssetError(f"{url}: {exc}", retryable=True) from exc
         except (HttpError, AssetError) as exc:
             temporary = _is_temporary(exc)
             error = f"{TEMPORARY}{exc}" if temporary else str(exc)
             delay = TEMPORARY_FAILURE_TTL if temporary else FAILURE_TTL
-            retry = datetime.now(timezone.utc) + timedelta(seconds=min(self.ttl, delay))
-            self.repo.upsert_asset(url, status="failed", error=error, expires_at=iso_utc(retry))
+            self.repo.upsert_asset(url, status="failed", error=error, expires_at=_iso_after(min(self.ttl, delay)))
             raise AssetError(f"{url}: {error}", retryable=temporary) from exc
 
+    def store(self, url: str, data: bytes, declared_type: str = "", *, expires: bool = True) -> tuple[bytes, str]:
+        """Validate ``data`` as an image and cache it as the copy of ``url``. No network.
+
+        Used for downloads, and for images the user saved in their own browser
+        (``import-assets``), e.g. wiki files the pipeline can't fetch. Those are
+        stored with ``expires=False``: they can't be downloaded again, so they are
+        kept until replaced.
+        """
+        if not data:
+            raise AssetError("empty response body")
+        if len(data) > MAX_ASSET_BYTES:
+            raise AssetError(f"image is {len(data)} bytes, over the {MAX_ASSET_BYTES} byte limit")
+        content_type, extension = sniff_image(data, declared_type)
         digest = hashlib.sha256(data).hexdigest()
         relative = f"{digest[:2]}/{digest}{extension}"
         atomic_write_bytes(self.root / relative, data)
-        expires = datetime.now(timezone.utc) + timedelta(seconds=self.ttl)
+        expires_at = _iso_after(self.ttl) if expires else None
         self.repo.upsert_asset(
             url,
             status="ok",
@@ -149,7 +157,7 @@ class AssetCache:
             content_type=content_type,
             size_bytes=len(data),
             local_path=relative,
-            expires_at=iso_utc(expires),
+            expires_at=expires_at,
         )
         return data, content_type
 
@@ -190,7 +198,7 @@ class AssetCache:
         changed = False
         for img in soup.find_all("img"):
             src = img.get("src")
-            if not isinstance(src, str) or not src.startswith(("http://", "https://")):
+            if not is_remote_url(src):
                 continue
             if fetch:
                 data, content_type = self.ensure(src)

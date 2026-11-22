@@ -4,7 +4,7 @@ import hashlib
 
 import pytest
 
-from mathbot.http import HttpStatusError, Response
+from mathbot.http import HttpStatusError
 from mathbot.render import vendor
 from mathbot.render.vendor import (
     VENDORED,
@@ -14,19 +14,7 @@ from mathbot.render.vendor import (
     read_asset,
     require_assets,
 )
-
-
-class FakeClient:
-    def __init__(self, bodies: dict[str, bytes | Exception]):
-        self.bodies = bodies
-        self.calls: list[str] = []
-
-    def get(self, url, **kwargs):
-        self.calls.append(url)
-        body = self.bodies[url]
-        if isinstance(body, Exception):
-            raise body
-        return Response(url, 200, {}, body)
+from tests.conftest import DictClient as FakeClient
 
 
 @pytest.fixture
@@ -62,7 +50,7 @@ def test_install_verifies_and_is_idempotent(tmp_path, pinned):
 
 
 def test_install_refuses_a_file_with_the_wrong_hash(tmp_path, pinned):
-    tampered = {url: b"tampered" for url in pinned}
+    tampered = dict.fromkeys(pinned, b"tampered")
     with pytest.raises(RenderAssetsMissing, match="refusing to install"):
         install_assets(tmp_path, FakeClient(tampered))
     assert not any(tmp_path.rglob("*.js"))
