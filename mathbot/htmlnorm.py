@@ -8,7 +8,9 @@ Raw source content is stored untouched elsewhere; this module produces the
 * protocol-relative and relative URLs are made absolute;
 * links are unwrapped (a PNG cannot be clicked);
 * LaTeX survives: MathJax ``\\(...\\)`` text is left alone and AoPS LaTeX
-  images keep their ``alt`` attribute, which holds the TeX source.
+  images keep their ``alt`` attribute, which holds the TeX source;
+* TeX that an AoPS page shows as plain text is made typesettable (``tex.py``), an ``<img>``
+  tag it shows as text becomes the image, and collapsed forum remarks are removed.
 """
 
 from __future__ import annotations
@@ -18,10 +20,20 @@ import re
 from dataclasses import dataclass
 from urllib.parse import urljoin
 
-from bs4 import BeautifulSoup, Comment, Tag
+from bs4 import BeautifulSoup, Comment, NavigableString, Tag
+
+from mathbot.tex import repair_aops_tex
 
 _DROP_TAGS = ("script", "style", "noscript", "iframe", "object", "embed", "form", "input", "button", "link", "meta")
 _DROP_SELECTORS = (".mw-editsection", "#toc", ".toc", ".printfooter", ".catlinks")
+# A collapsed remark in an AoPS forum post: a link that reveals text hidden with CSS.
+_AOPS_DROP_SELECTORS = (".cmty-hide-heading", ".cmty-hide-content")
+# An <img> tag an AoPS page shows as text, because wikitext does not allow it.
+_ESCAPED_IMG = re.compile(
+    r'<img\s+src\s*=\s*"(https://(?:[\w-]+\.)*artofproblemsolving\.com/[^"\s]+)"'
+    r'(?:\s+alt\s*=\s*"([^"]*)")?\s*/?>',
+    re.IGNORECASE,
+)
 _URL_ATTRS = ("src", "href", "xlink:href")
 # AoPS renders TeX to images; the alt text is the TeX source.
 _LATEX_IMG_CLASSES = {"latex", "latexcenter", "asy-image"}
@@ -67,8 +79,23 @@ def _is_script_url(value: str) -> bool:
     return _URL_IGNORED_CHARS.sub("", value).lower().startswith(("javascript:", "vbscript:"))
 
 
-def normalize_fragment(fragment: str, base_url: str) -> NormalizedContent:
+def _restore_escaped_images(soup: BeautifulSoup) -> None:
+    soup.smooth()  # the URL inside the tag was a link: one text node again now that links are unwrapped
+    for node in soup.find_all(string=_ESCAPED_IMG):
+        source, position = str(node), 0
+        pieces: list[Tag | NavigableString] = []
+        for match in _ESCAPED_IMG.finditer(source):
+            image = soup.new_tag("img", attrs={"src": match[1], "alt": match[2] or ""})
+            pieces += [NavigableString(source[position : match.start()]), image]
+            position = match.end()
+        node.replace_with(*pieces, NavigableString(source[position:]))
+
+
+def normalize_fragment(fragment: str, base_url: str, *, aops: bool = False) -> NormalizedContent:
     """Sanitize ``fragment`` and return its normalized HTML, text and hash.
+
+    ``aops`` repairs markup that AoPS left unrendered; other sources' text is never touched.
+    Both the live ingestion and the legacy import set it for every AoPS provider.
 
     Raises :class:`InvalidContentError` when nothing meaningful is left, so an
     empty parser result can never be stored as a problem.
@@ -79,7 +106,7 @@ def normalize_fragment(fragment: str, base_url: str) -> NormalizedContent:
         comment.extract()
     for tag in soup.find_all(_DROP_TAGS):
         tag.decompose()
-    for selector in _DROP_SELECTORS:
+    for selector in _DROP_SELECTORS + (_AOPS_DROP_SELECTORS if aops else ()):
         for tag in soup.select(selector):
             tag.decompose()
 
@@ -103,6 +130,10 @@ def normalize_fragment(fragment: str, base_url: str) -> NormalizedContent:
 
     for anchor in soup.find_all("a"):
         anchor.unwrap()
+
+    if aops:
+        _restore_escaped_images(soup)
+        repair_aops_tex(soup)
 
     html = str(soup).strip()
     text = extract_text(soup)

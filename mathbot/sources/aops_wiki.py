@@ -43,7 +43,7 @@ from collections.abc import Iterable
 
 from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 
-from mathbot.contests import AOPS_WIKI, ContestSeries
+from mathbot.contests import AOPS_WIKI, ContestSeries, problem_id
 from mathbot.http import HttpError, PoliteClient, SourceBlockedError
 from mathbot.models import EditionRef, EditionResult, KnownEdition, ParsedProblem, ProblemFailure
 
@@ -54,6 +54,14 @@ PAGE_URL = "https://artofproblemsolving.com/wiki/index.php/{title}"
 TITLES_PER_QUERY = 50
 
 _HEADING = re.compile(r"^h[1-6]$")
+# Text that wiki users added below a statement with no heading or other marker, so that
+# trim_statement can't recognise it: problem id -> how the first block to drop begins.
+EXTRA_TEXT = {
+    "aime1-2025-p01": "First do base conversion of both numbers",  # a whole solution
+    "amc10b-2019-p22": "Did anyone else notice that the last Raashan",  # a comment
+    "amc12b-2019-p19": "Did anyone else notice that the last Raashan",
+    "usamo-1974-p04": "Note: there is a possible flaw in the original statement.",  # refers to a user's post
+}
 _ANSWER_ITEM = re.compile(r"^\(?([A-E]|\d{1,4})\)?$")
 
 
@@ -199,6 +207,24 @@ def trim_statement(html: str) -> str:
             break
         last.extract()
     return str(soup).strip()
+
+
+def drop_extra_text(html: str, pid: str) -> str:
+    """``html`` without the text listed for this problem in ``EXTRA_TEXT`` and all that follows it.
+
+    Returned unchanged for every other problem, and once the wiki page no longer has the text.
+    """
+    marker = EXTRA_TEXT.get(pid)
+    if marker is None:
+        return html
+    soup = BeautifulSoup(html, "html.parser")
+    for node in soup.find_all(True, recursive=False)[1:]:  # never the first block: that is the statement
+        if " ".join(node.get_text().split()).startswith(marker):
+            for sibling in list(node.next_siblings):
+                sibling.extract()
+            node.extract()
+            return str(soup).strip()
+    return html
 
 
 def extract_statement(page_html: str) -> str:
@@ -379,7 +405,7 @@ class AopsWikiAdapter:
                 data = self._api(action="parse", page=title, prop="text|revid", redirects=1, disablelimitreport=1)
                 parse = parse_payload(data, url)
                 html = payload_html(parse)
-                statement = extract_statement(html)
+                statement = drop_extra_text(extract_statement(html), problem_id(series.key, edition.year, number))
             except SourceBlockedError:
                 raise
             except HttpError as exc:

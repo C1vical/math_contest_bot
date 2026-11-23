@@ -10,6 +10,7 @@ from pathlib import Path
 from mathbot.contests import ContestRegistry
 from mathbot.db.repo import Repository
 from mathbot.htmlnorm import MIN_TEXT_CHARS
+from mathbot.tex import unrendered_tex
 
 ERROR, WARNING = "error", "warning"
 # Statements that could hold solution text: a heading, a wikitext marker or the word itself.
@@ -79,7 +80,7 @@ def amc_problems_without_choices(conn: sqlite3.Connection) -> list[tuple[str, st
 
 def leaked_solutions(conn: sqlite3.Connection) -> list[str]:
     """AoPS Wiki statements that still carry solution text after the statement (see ``trim_statement``)."""
-    from mathbot.sources.aops_wiki import trim_statement
+    from mathbot.sources.aops_wiki import EXTRA_TEXT, drop_extra_text, trim_statement
 
     rows = conn.execute(
         """
@@ -92,7 +93,8 @@ def leaked_solutions(conn: sqlite3.Connection) -> list[str]:
     return [
         r["id"]
         for r in rows
-        if _MAY_LEAK.search(r["statement_html"]) and trim_statement(r["statement_html"]) != r["statement_html"]
+        if (_MAY_LEAK.search(r["statement_html"]) and trim_statement(r["statement_html"]) != r["statement_html"])
+        or (r["id"] in EXTRA_TEXT and drop_extra_text(r["statement_html"], r["id"]) != r["statement_html"])
     ]
 
 
@@ -113,6 +115,12 @@ def unbalanced_tex(conn: sqlite3.Connection) -> list[tuple[str, str]]:
             if opened != closed:
                 found.append((row["id"], f"{opened} {opening} but {closed} {closing}"))
     return found
+
+
+def statements_with_unrendered_tex(conn: sqlite3.Connection) -> list[tuple[str, str]]:
+    """``(problem id, detail)`` for statements whose picture would show TeX source instead of maths."""
+    rows = conn.execute("SELECT id, statement_html FROM problems ORDER BY id")
+    return [(r["id"], ", ".join(found)) for r in rows if (found := unrendered_tex(r["statement_html"]))]
 
 
 def missing_answers(conn: sqlite3.Connection, registry: ContestRegistry) -> list[tuple[str, int, int]]:
@@ -215,6 +223,8 @@ def validate(
         add(WARNING, "leaked-solution", f"{problem_id} contains solution text after the statement")
     for problem_id, detail in unbalanced_tex(conn):
         add(WARNING, "tex-delimiters", f"{problem_id}: {detail}")
+    for problem_id, detail in statements_with_unrendered_tex(conn):
+        add(WARNING, "unrendered-tex", f"{problem_id}: {detail}")
     if registry is not None:
         for edition, missing, total in missing_answers(conn, registry):
             add(WARNING, "missing-answer", f"{edition}: {missing} of {total} multiple-choice problems have no answer")

@@ -23,7 +23,7 @@ from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
-from mathbot.contests import ContestSeries, edition_id
+from mathbot.contests import AOPS_PROVIDERS, ContestSeries, edition_id
 from mathbot.db.repo import INSERTED, UNCHANGED, UPDATED, Repository
 from mathbot.htmlnorm import InvalidContentError, normalize_fragment
 from mathbot.http import HttpError, RobotsDisallowedError, SourceBlockedError
@@ -346,9 +346,10 @@ class Ingestor:
             self._error(report, series, ref.year, failure)
 
         stored = 0
+        aops = series.provider in AOPS_PROVIDERS
         for parsed in result.problems:
             try:
-                content = normalize_fragment(parsed.statement_html, parsed.source_url)
+                content = normalize_fragment(parsed.statement_html, parsed.source_url, aops=aops)
             except InvalidContentError as exc:
                 self._error(
                     report,
@@ -360,7 +361,9 @@ class Ingestor:
             solution = None
             if parsed.solution_html:
                 try:
-                    solution = normalize_fragment(parsed.solution_html, parsed.solution_source or parsed.source_url)
+                    solution = normalize_fragment(
+                        parsed.solution_html, parsed.solution_source or parsed.source_url, aops=aops
+                    )
                 except InvalidContentError:
                     solution = None  # an empty solution is simply not stored; the statement is still valid
             if dry_run:

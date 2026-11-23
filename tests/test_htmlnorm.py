@@ -78,3 +78,30 @@ def test_script_urls_hidden_by_whitespace_or_case_are_removed():
         "https://example.org/",
     ).html
     assert "script:" not in html.lower() and "alert" not in html
+
+
+def test_an_img_tag_shown_as_text_by_aops_becomes_the_image():
+    """2021 USAMO 2: wikitext does not allow <img>, so the page shows the tag, with its URL as a link."""
+    url = "https://services.artofproblemsolving.com/download.php?id=YXR0==&amp;rn=R0="
+    shown = (
+        f'<p>As shown below.</p><center><p>&lt;img src = "<a href="{url}">{url}</a>" alt = "Diagram"/&gt;</p></center>'
+    )
+    html = normalize_fragment(shown, BASE, aops=True).html
+    image = f'<img alt="Diagram" src="{url}"/>'
+    assert html == f"<p>As shown below.</p><center><p>{image}</p></center>"
+    assert remote_images(html) == [url.replace("&amp;", "&")]
+    assert normalize_fragment(html, BASE, aops=True).html == html
+    assert "&lt;img" in normalize_fragment(shown, BASE).html  # other sources' text is never touched
+    elsewhere = '<p>Write &lt;img src="https://example.org/x.png"/&gt; here.</p>'
+    assert normalize_fragment(elsewhere, BASE, aops=True).html == elsewhere
+
+
+def test_collapsed_forum_remarks_are_removed_from_aops_posts():
+    """1973 CMO 7: only the remark's heading was visible in the picture."""
+    post = (
+        "State a general law and prove it.<br/>"
+        '<a class="cmty-hide-heading" href="#" onclick="$(this).next().toggle()">Remark.</a>'
+        '<div class="cmty-hide-content" style="display:none">It seems that this is a two-part problem.</div>'
+    )
+    assert normalize_fragment(post, BASE, aops=True).html == "State a general law and prove it.<br/>"
+    assert "Remark" in normalize_fragment(post, BASE).html

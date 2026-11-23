@@ -13,6 +13,7 @@ from html import escape
 
 from mathbot.config import RenderSettings
 from mathbot.render.vendor import asset_url
+from mathbot.tex import has_environment
 
 # 6: AoPS statements show AoPS's own formula and diagram PNGs
 # 7: AoPS formulas scaled to the text size, no trailing blank space, over-wide blocks shrunk to fit
@@ -148,8 +149,9 @@ async (needsMathJax) => {
 
 def needs_mathjax(body_html: str) -> bool:
     """CEMC statements carry TeX for MathJax; AoPS statements use AoPS's PNGs, plus TeX
-    for any formula whose PNG could not be downloaded."""
-    return "\\(" in body_html or "\\[" in body_html
+    for any formula whose PNG could not be downloaded and any that AoPS showed as text.
+    MathJax also typesets environments (``\\begin{align*}``) that stand outside any delimiter."""
+    return "\\(" in body_html or "\\[" in body_html or has_environment(body_html)
 
 
 def renderer_version(settings: RenderSettings) -> str:

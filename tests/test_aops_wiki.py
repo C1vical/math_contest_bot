@@ -12,12 +12,13 @@ import json
 import pytest
 
 from mathbot.http import HttpStatusError, SourceBlockedError
-from mathbot.models import KnownEdition
+from mathbot.models import EditionRef, KnownEdition
 from mathbot.sources.aops_wiki import (
     API_URL,
     AopsWikiAdapter,
     WikiApiError,
     WikiParseError,
+    drop_extra_text,
     edition_years,
     extract_statement,
     page_title,
@@ -288,3 +289,33 @@ def test_live_statement_extraction_drops_broken_heading_paragraphs():
     )
     statement = extract_statement(page)
     assert "ordered pairs" in statement and "Video" not in statement and "youtu" not in statement
+
+
+LEAK = (
+    "<p>Find the sum of all integer bases.\n</p><p>First do base conversion of both numbers to write them\n</p>"
+    "<p>Final answer is 21+49 = 70\n</p>"
+)
+
+
+def test_solutions_without_any_heading_are_dropped_from_the_problems_that_have_them():
+    assert drop_extra_text(LEAK, "aime1-2025-p01") == "<p>Find the sum of all integer bases.\n</p>"
+    assert drop_extra_text(LEAK, "aime1-2025-p02") == LEAK  # only where it is known to be there
+    clean = "<p>Find the sum of all integer bases.\n</p><p>Give it in base ten.</p>"
+    assert drop_extra_text(clean, "aime1-2025-p01") == clean
+    inside = "<p>First do base conversion of both numbers.</p>"  # never the statement itself
+    assert drop_extra_text(inside, "aime1-2025-p01") == inside
+
+
+def test_live_ingestion_drops_known_extra_text(registry):
+    def route(url, params):
+        if params.get("action") == "parse" and params.get("prop") == "text|revid":
+            page = f'<div class="mw-parser-output"><h2>Problem</h2>{LEAK}<h2>Solution</h2><p>s</p></div>'
+            return json.dumps({"parse": {"title": params["page"], "revid": 7, "text": page}})
+        return None
+
+    series = registry.get("AIME1")
+    edition = EditionRef("AIME1", 2025, "2025 AIME I", "https://x", "2025_AIME_I_Problems", 15)
+    result = AopsWikiAdapter(FixtureClient(route)).fetch_edition(series, edition, only_numbers=frozenset({1, 2}))
+    first, second = result.problems
+    assert "Final answer" not in first.statement_html and "Final answer" in first.raw_payload
+    assert "Final answer" in second.statement_html

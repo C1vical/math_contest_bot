@@ -32,3 +32,14 @@ def test_multiple_choice_problems_without_an_answer_are_reported(repo, registry,
     report = validate(repo, tmp_path, "x", registry=registry)
     assert checks(report, "missing-answer") == ["pascal-2024: 1 of 2 multiple-choice problems have no answer"]
     assert checks(validate(repo, tmp_path, "x"), "missing-answer") == []  # needs the registry
+
+
+def test_known_extra_text_and_unrendered_tex_are_reported(repo, tmp_path):
+    leak = "<p>Find the sum.</p><p>First do base conversion of both numbers.</p>"
+    add_problem(repo, 1, leak, key="AIME1", year=2025)
+    add_problem(repo, 2, leak, key="AIME1", year=2025)  # not a listed problem
+    add_problem(repo, 3, "<p>Solve \\begin{align*} x &amp;= 1 \\end{align*} now.</p>", key="AIME1", year=2025)
+    add_problem(repo, 4, "<p>It costs $5 and $6, so \\(x = 1\\).</p>", key="AIME1", year=2025)
+    report = validate(repo, tmp_path, "x")
+    assert checks(report, "leaked-solution") == ["aime1-2025-p01 contains solution text after the statement"]
+    assert checks(report, "unrendered-tex") == ["aime1-2025-p03: bare TeX environment, bare TeX command"]

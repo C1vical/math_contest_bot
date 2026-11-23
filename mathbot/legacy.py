@@ -12,6 +12,8 @@ live ingest and are treated accordingly:
 * AoPS Wiki statements are cut at the first heading or solution marker: the old
   scraper sometimes let the solutions through (``<h3>Solution 1</h3>...``,
   ``<p>Solution</p>``, ``==Video Solution``), which would be drawn into the image;
+* TeX that AoPS's page showed as plain text is made typesettable, as in a live
+  ingest (``tex.py``); the raw payload keeps the original;
 * statements that are empty once the title is gone are rejected - the old
   loader stored a bare title whenever a fetch failed;
 * a problem that already came from a live ingest is never overwritten;
@@ -35,6 +37,7 @@ from pathlib import Path
 
 from mathbot.contests import (
     AOPS_COMMUNITY,
+    AOPS_PROVIDERS,
     AOPS_WIKI,
     CEMC,
     ContestRegistry,
@@ -46,7 +49,7 @@ from mathbot.db.repo import INSERTED, UNCHANGED, UPDATED, Repository
 from mathbot.htmlnorm import InvalidContentError, normalize_fragment
 from mathbot.models import EditionRef, ParsedProblem
 from mathbot.sources.aops_community import CATEGORY_URL
-from mathbot.sources.aops_wiki import PAGE_URL, page_title, trim_statement
+from mathbot.sources.aops_wiki import PAGE_URL, drop_extra_text, page_title, trim_statement
 from mathbot.sources.base import load_manifest
 
 log = logging.getLogger(__name__)
@@ -194,11 +197,12 @@ def import_legacy(
         raw = str(row["question_statement"] or "")
         statement = strip_legacy_title(raw)
         if series.provider == AOPS_WIKI:
-            statement = trim_statement(statement)  # solution text the old scraper let through
+            # solution text the old scraper let through, or that a wiki page shows as statement text
+            statement = drop_extra_text(trim_statement(statement), pid)
         edition_url, edition_identifier = locator.edition(series, year)
         source_url = locator.problem(series, year, number, edition_url)
         try:
-            content = normalize_fragment(statement, source_url)
+            content = normalize_fragment(statement, source_url, aops=series.provider in AOPS_PROVIDERS)
         except InvalidContentError as exc:
             report.invalid.append((old_id, str(exc)))
             continue

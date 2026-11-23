@@ -19,36 +19,14 @@ rather than shipping a picture with a hole.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 
+from mathbot.tex import TEX_CLASS, mathjax_tex
+
 AOPS_LATEX_HOSTS = ("latex.artofproblemsolving.com",)
 _DISPLAY_CLASSES = {"latexcenter"}
-
-
-# AoPS TeX is real LaTeX; MathJax lacks text-mode tabular. array has the same syntax.
-_TABULAR = re.compile(r"\\(begin|end)\{tabular\}")
-
-
-def _tex_from_alt(alt: str, display_hint: bool) -> str | None:
-    alt = alt.strip()
-    if not alt or alt.startswith("[asy]"):
-        return None
-    alt = _TABULAR.sub(r"\\\1{array}", alt)
-    if alt.startswith("$$") and alt.endswith("$$") and len(alt) > 4:
-        return f"\\[{alt[2:-2]}\\]"
-    if alt.startswith("$") and alt.endswith("$") and len(alt) > 2:
-        inner = alt[1:-1]
-        return f"\\[{inner}\\]" if display_hint else f"\\({inner}\\)"
-    if alt.startswith("\\[") and alt.endswith("\\]"):
-        return alt
-    if alt.startswith("\\(") and alt.endswith("\\)"):
-        return alt
-    if re.match(r"\\begin\{[a-zA-Z*]+\}", alt) and alt.rstrip().endswith("}"):
-        return alt
-    return None
 
 
 def is_aops_latex_image(src: str) -> bool:
@@ -64,7 +42,7 @@ def _img_tex(img: Tag) -> str | None:
     src = img.get("src")
     if not isinstance(src, str) or not is_aops_latex_image(src):
         return None
-    return _tex_from_alt(str(img.get("alt") or ""), _is_display(img))
+    return mathjax_tex(str(img.get("alt") or ""), _is_display(img))
 
 
 def formula_images(html: str) -> set[str]:
@@ -94,7 +72,7 @@ def latex_images_to_tex(html: str, keep: Callable[[str], bool] | None = None) ->
             block.append(NavigableString(tex))
             img.replace_with(block)
         else:
-            span = soup.new_tag("span", attrs={"class": "aops-tex"})
+            span = soup.new_tag("span", attrs={"class": TEX_CLASS})
             span.append(NavigableString(tex))
             img.replace_with(span)
         converted += 1
