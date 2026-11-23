@@ -250,6 +250,12 @@ def test_bot_loads_all_cogs_and_registers_expected_commands(tmp_path, registry):
     assert not {"gimme", "info"} & names  # pre-2.0 aliases are gone
 
 
+def test_the_bot_receives_no_messages_or_member_activity(tmp_path, registry):
+    """PRIVACY.md promises this; update it before asking Discord for more."""
+    bot = MathBot(load_settings({"DATA_DIR": str(tmp_path)}), registry, HealthState())
+    assert [name for name, enabled in bot.intents if enabled] == ["guilds"]
+
+
 def test_cooldown_policy():
     from mathbot.bot.policy import cooldown_for
 

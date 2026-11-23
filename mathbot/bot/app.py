@@ -32,8 +32,12 @@ class MathBot(commands.Bot):
     """The Discord client: settings, registry, database access and image delivery for the cogs."""
 
     def __init__(self, settings: Settings, registry: ContestRegistry, health: HealthState) -> None:
-        # Slash commands only: no privileged intents, and the prefix is never matched.
-        super().__init__(command_prefix=commands.when_mentioned, intents=discord.Intents.default(), help_command=None)
+        # Commands and buttons arrive whatever the intents. Servers, channels and roles are
+        # needed for permissions and the announcement; messages and other activity are not
+        # requested, as PRIVACY.md says. The prefix is never matched.
+        super().__init__(
+            command_prefix=commands.when_mentioned, intents=discord.Intents(guilds=True), help_command=None
+        )
         self.settings = settings
         self.registry = registry
         self.health = health
