@@ -148,9 +148,11 @@ Cloudflare R2.
 1. On the machine that renders, run the [update commands](#updating-problems) and then
    `python -m mathbot publish-db`. Only the newest snapshot is kept, in the bucket and
    in `data/snapshots`.
-2. On the bot host, install `requirements.lock`, set `DISCORD_TOKEN`, `IMAGE_BASE_URL`
-   and `DATABASE_SNAPSHOT_URL=<IMAGE_BASE_URL>/db/latest.json`, and start the bot. It
-   downloads and verifies the newest snapshot at startup. Chromium isn't needed there.
+2. On the bot host, install `requirements.lock`, set `DISCORD_TOKEN`, `IMAGE_BASE_URL`,
+   the same `S3_KEY_PREFIX` (if you use one) and
+   `DATABASE_SNAPSHOT_URL=<IMAGE_BASE_URL>/<S3_KEY_PREFIX>/db/latest.json` (without a
+   prefix: `<IMAGE_BASE_URL>/db/latest.json`), and start the bot. It downloads and
+   verifies the newest snapshot at startup. Chromium isn't needed there.
 
 [.github/workflows/refresh.yml](.github/workflows/refresh.yml) can do step 1 weekly. It
 stays off until you set the repository variable `MATHBOT_REFRESH_ENABLED=true` and the
