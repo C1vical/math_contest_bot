@@ -11,7 +11,14 @@ import discord
 from discord import app_commands
 
 from mathbot.bot.query import RandomFilters
-from mathbot.contests import FAMILY_NAMES, PROVIDER_NAMES, ContestRegistry, normalize_alias
+from mathbot.contests import (
+    FAMILY_NAMES,
+    PROVIDER_NAMES,
+    ContestRegistry,
+    ContestSeries,
+    UnknownContestError,
+    normalize_alias,
+)
 from mathbot.db.repo import ProblemRow
 
 COLOR = discord.Color.blue()
@@ -20,12 +27,20 @@ ANSWER_PREFIX = "mathbot:answer:"
 NAV_PREFIX = "mathbot:nav:"  # mathbot:nav:<+1|-1>:<problem id>
 MAX_CHOICES = 25  # Discord's autocomplete limit
 MAX_LABEL_CHARS = 100  # Discord's limit for an autocomplete entry's name
+MAX_ECHO_CHARS = 80  # user input repeated back in a message
+MIN_GROUP_SEARCH_CHARS = 3  # shorter text is not looked up in family and source names
 MAX_STATEMENT_CHARS = 3900  # text fallback, under Discord's 4096-character embed description limit
 
 
 def seconds(value: float) -> str:
     """A wait for humans: ``0.4s``, ``3s`` (never "0s")."""
     return f"{value:.1f}s" if value < 10 else f"{value:.0f}s"
+
+
+def clip(text: str) -> str:
+    """User input made safe to repeat inside backticks: one short line (options can hold 6000 characters)."""
+    line = " ".join(text.split()).replace("`", "'") or "(blank)"
+    return line if len(line) <= MAX_ECHO_CHARS else line[: MAX_ECHO_CHARS - 3] + "..."
 
 
 def error_embed(title: str, description: str) -> discord.Embed:
@@ -44,15 +59,43 @@ def suggest_contests(registry: ContestRegistry, text: str, limit: int = 5) -> li
 
 def unknown_contest_embed(registry: ContestRegistry, text: str) -> discord.Embed:
     """The reply to a contest name that did not resolve, with the closest matches."""
+    try:
+        members = registry.select(text)
+    except UnknownContestError:
+        members = []
+    if members:  # a family or source, where one contest is needed
+        keys = ", ".join(f"`{s.key}`" for s in members)
+        return error_embed(
+            "Pick one contest",
+            f"`{clip(text)}` is a group of contests: {keys}.\n"
+            "Use one of these here, or the whole group with `/random`.",
+        )
     suggestions = suggest_contests(registry, text)
     hint = f"Did you mean {', '.join(f'`{k}`' for k in suggestions)}?" if suggestions else "See `/contests`."
-    return error_embed("Unknown contest", f"I don't know a contest called `{text}`. {hint}")
+    return error_embed("Unknown contest", f"I don't know a contest called `{clip(text)}`. {hint}")
+
+
+def _matches(series: ContestSeries, needle: str) -> bool:
+    names = [series.key, series.name, *series.aliases]
+    if len(needle) >= MIN_GROUP_SEARCH_CHARS:
+        names += [series.family, FAMILY_NAMES.get(series.family, ""), PROVIDER_NAMES[series.provider]]
+    return any(needle in normalize_alias(name) for name in names)
+
+
+def _is_retired(series: ContestSeries) -> bool:
+    """No longer held (AHSME, the 2021 Fall AMCs, ...)."""
+    return bool(series.eras) and series.eras[-1].last_year is not None
 
 
 def contest_choices(
     registry: ContestRegistry, current: str, *, families: bool = False
 ) -> list[app_commands.Choice[str]]:
-    """Autocomplete entries matching ``current`` against keys, names and aliases."""
+    """Autocomplete entries matching ``current`` against keys, names, aliases, families and sources.
+
+    Discord shows at most 25 entries and there are more contests than that, so contests
+    that are no longer held come last: they are the ones cut from a list that is too
+    long, and typing part of a name still finds them.
+    """
     needle = normalize_alias(current)
     choices: list[app_commands.Choice[str]] = []
     if families:
@@ -60,9 +103,9 @@ def contest_choices(
             if len(members) > 1 and (not needle or needle in normalize_alias(family)):
                 label = f"{family} - all of {FAMILY_NAMES.get(family, family)}"
                 choices.append(app_commands.Choice(name=label[:MAX_LABEL_CHARS], value=family))
-    for series in registry.all():
-        names = (series.key, series.name, *series.aliases)
-        if not needle or any(needle in normalize_alias(name) for name in names):
+    listed = {choice.value for choice in choices}  # /random AIME means the family, so it is listed once
+    for series in sorted(registry.all(), key=_is_retired):
+        if series.key not in listed and (not needle or _matches(series, needle)):
             label = series.key if normalize_alias(series.name) == series.key else f"{series.key} - {series.name}"
             choices.append(app_commands.Choice(name=label[:MAX_LABEL_CHARS], value=series.key))
     # Exact / prefix matches first so "AMC10" offers AMC10 before AMC10A.
@@ -85,7 +128,7 @@ def problem_embed(problem: ProblemRow, *, has_image: bool) -> discord.Embed:
         embed.description = (text[:MAX_STATEMENT_CHARS] + " ...") if len(text) > MAX_STATEMENT_CHARS else text
         embed.add_field(
             name="Image unavailable",
-            value="This problem has not been rendered yet, so the text version is shown. "
+            value="The image could not be loaded, so the text version is shown. "
             "Diagrams and formatted maths may be missing.",
             inline=False,
         )
@@ -116,7 +159,7 @@ def parse_nav_custom_id(custom_id: str) -> tuple[str, int, int | None] | None:
     owner, sep, problem_id = rest.partition(":")
     if not sep:  # the older form without an owner
         owner, problem_id = "", rest
-    if step not in {"+1", "-1"} or not problem_id or (owner and not owner.isdigit()):
+    if step not in {"+1", "-1"} or not problem_id or (owner and not owner.isdecimal()):
         return None
     return problem_id, int(step), int(owner) if owner else None
 
@@ -142,7 +185,8 @@ def problem_view(
     carry the original filters (custom ids are limited to 100 characters), and a
     guessed substitute such as "this contest" silently narrowed an unfiltered /random.
     Every ``custom_id`` carries what it needs and is handled by a listener, so the
-    buttons keep working after a bot restart.
+    buttons keep working after a bot restart. The view is returned stopped: discord.py
+    would otherwise keep every one ever sent in memory, waiting for presses.
     """
     items: list[discord.ui.Button] = [
         discord.ui.Button(
@@ -171,6 +215,7 @@ def problem_view(
     for item in items:
         item.row = 0
         view.add_item(item)
+    view.stop()
     return view
 
 
@@ -187,7 +232,7 @@ class Paginator(discord.ui.View):
         self.pages = pages
         self.owner_id = owner_id
         self.index = 0
-        self.message: discord.InteractionMessage | None = None
+        self.message: discord.Message | None = None
         for number, page in enumerate(pages, start=1):
             page.set_footer(text=f"Page {number}/{len(pages)}")
         self._sync()
@@ -225,10 +270,9 @@ class Paginator(discord.ui.View):
 
 
 async def send_paginated(interaction: discord.Interaction, pages: list[discord.Embed]) -> None:
-    """Reply with ``pages``, adding Previous / Next buttons when there is more than one."""
+    """Answer a deferred interaction with ``pages``, with Previous / Next buttons when there are several."""
     if len(pages) == 1:
-        await interaction.response.send_message(embed=pages[0])
+        await interaction.followup.send(embed=pages[0])
         return
     view = Paginator(pages, interaction.user.id)
-    await interaction.response.send_message(embed=pages[0], view=view)
-    view.message = await interaction.original_response()
+    view.message = await interaction.followup.send(embed=pages[0], view=view, wait=True)

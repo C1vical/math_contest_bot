@@ -53,6 +53,7 @@ class Contests(commands.Cog):
     @app_commands.command(name="contests", description="List the contests the bot knows")
     @allowed_here()
     async def contests(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(thinking=True)  # counts every problem; slow on a small host
         stats = await self.bot.db.call(lambda repo: repo.series_stats())
         await ui.send_paginated(interaction, contest_pages(stats))
 
@@ -66,6 +67,7 @@ class Contests(commands.Cog):
             embed = ui.unknown_contest_embed(self.bot.registry, contest)
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
+        await interaction.response.defer(thinking=True)
         years, stats = await self.bot.db.call(
             lambda repo: (repo.years_for(series.key), [s for s in repo.series_stats() if s.key == series.key])
         )
@@ -85,11 +87,12 @@ class Contests(commands.Cog):
             embed.add_field(name="Format", value=eras, inline=False)
         if series.aliases:
             embed.add_field(name="Also accepted", value=", ".join(f"`{a}`" for a in series.aliases), inline=False)
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="stats", description="How many problems are loaded")
     @allowed_here()
     async def stats(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(thinking=True)
         totals, stats = await self.bot.db.call(lambda repo: (repo.totals(), repo.series_stats(include_empty=False)))
         embed = discord.Embed(title="Database statistics", color=ui.COLOR)
         embed.add_field(name="Problems", value=f"{totals['problems']:,}", inline=True)
@@ -107,7 +110,7 @@ class Contests(commands.Cog):
             embed.add_field(
                 name="Largest contests", value="\n".join(f"`{s.key}`: {s.problems:,}" for s in top), inline=False
             )
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
 
 async def setup(bot: MathBot) -> None:

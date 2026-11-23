@@ -41,13 +41,14 @@ def parse_problem_reference(text: str, resolves: Callable[[str], bool]) -> Probl
     is a contest and the name with it is not, so ``AMC 8 2019 5`` is AMC 8 problem 5 and
     ``AIME 1 2019`` stays AIME I. ``resolves(name)`` says whether a name is a contest.
     """
+    # Digits are tested with isdecimal(): isdigit() also accepts "²", which int() refuses.
     year: int | None = None
     number: int | None = None
     name: list[str] = []
     tokens = [t for t in _SEPARATORS.split(text.strip()) if t]
     expect_number = False
     for token in tokens:
-        if expect_number and token.isdigit():
+        if expect_number and token.isdecimal():
             number, expect_number = _number(token), False
             if number is None:
                 name.append(token)
@@ -56,14 +57,14 @@ def parse_problem_reference(text: str, resolves: Callable[[str], bool]) -> Probl
         explicit = _EXPLICIT_NUMBER.match(token)
         if explicit and number is None and _number(explicit.group(1)) is not None:
             number = _number(explicit.group(1))
-        elif token.isdigit() and len(token) == 4 and year is None and MIN_YEAR <= int(token) <= MAX_YEAR:
+        elif token.isdecimal() and len(token) == 4 and year is None and MIN_YEAR <= int(token) <= MAX_YEAR:
             year = int(token)
         elif token.lower() in _NUMBER_WORDS and number is None:
             expect_number = True
         else:
             name.append(token)
 
-    if number is None and len(name) > 1 and name[-1].isdigit() and _number(name[-1]) is not None:
+    if number is None and len(name) > 1 and name[-1].isdecimal() and _number(name[-1]) is not None:
         shorter = " ".join(name[:-1])
         if not resolves(" ".join(name)) and resolves(shorter):
             number = _number(name.pop())
@@ -83,7 +84,14 @@ _FIELD_CODES = {
     "owner": "u",
 }
 _CODE_FIELDS = {code: name for name, code in _FIELD_CODES.items()}
-_INT_FIELDS = {"year", "year_from", "year_to", "number", "owner"}
+_MAX_USER_ID = 2**64 - 1
+_INT_RANGES = {
+    "year": (MIN_YEAR, MAX_YEAR),
+    "year_from": (MIN_YEAR, MAX_YEAR),
+    "year_to": (MIN_YEAR, MAX_YEAR),
+    "number": (1, MAX_NUMBER),
+    "owner": (0, _MAX_USER_ID),
+}
 _TOKEN = re.compile(r"^[A-Za-z0-9_]{1,40}$")
 
 
@@ -120,8 +128,9 @@ class RandomFilters:
             name = _CODE_FIELDS.get(code)
             if name is None or not _TOKEN.match(raw):
                 return None
-            if name in _INT_FIELDS:
-                if not raw.isdigit():
+            if name in _INT_RANGES:
+                low, high = _INT_RANGES[name]
+                if not raw.isdecimal() or not low <= int(raw) <= high:
                     return None
                 values[name] = int(raw)
             else:

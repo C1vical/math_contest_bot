@@ -57,7 +57,7 @@ def test_contest_autocomplete_is_case_insensitive_and_capped(registry):
     assert [c.value for c in ui.contest_choices(registry, "repechage")] == []  # CMOQR is disabled
     assert len(ui.contest_choices(registry, "")) <= 25
     with_families = [c.value for c in ui.contest_choices(registry, "pcf", families=True)]
-    assert with_families == ["PCF"]
+    assert with_families == ["PCF", "PASCAL", "CAYLEY", "FERMAT"]  # the whole group first, then its members
     assert all(len(c.name) <= 100 for c in ui.contest_choices(registry, "", families=True))
 
 

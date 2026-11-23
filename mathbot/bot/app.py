@@ -20,8 +20,6 @@ from mathbot.db import Repository, open_database
 
 log = logging.getLogger(__name__)
 
-MAX_ECHO_CHARS = 80  # user input repeated back in an error message
-
 COGS = (
     "mathbot.bot.cogs.problems",
     "mathbot.bot.cogs.contests",
@@ -95,9 +93,16 @@ class MathBot(commands.Bot):
         await self.images.close()
         await super().close()
 
-    async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
+    async def on_app_command_error(self, interaction: discord.Interaction, error: Exception) -> None:
         """Every failure gets a reply the user can see, and unexpected ones a log entry."""
-        if isinstance(error, NotAllowedHere):
+        if interaction.type is discord.InteractionType.autocomplete:
+            # Discord refuses a message here; the option simply shows no suggestions.
+            log.warning("autocomplete failed", extra={"error": str(error)})
+            return
+        if isinstance(error, app_commands.CommandNotFound):
+            log.warning("a command this version does not have was used", extra={"command": error.name})
+            message = "That command no longer exists. Type `/` to see the current ones."
+        elif isinstance(error, NotAllowedHere):
             message = "This bot's commands can't be used here (wrong channel, or you lack the required role)."
         elif isinstance(error, NotAdmin):
             message = "That command is for bot administrators only."
@@ -106,7 +111,7 @@ class MathBot(commands.Bot):
         elif isinstance(error, app_commands.CheckFailure):
             message = "You can't use that command here."
         elif isinstance(error, app_commands.TransformerError):
-            value = discord.utils.escape_markdown(str(error.value))[:MAX_ECHO_CHARS]
+            value = ui.clip(str(error.value))
             message = f"I couldn't understand `{value}` for that option."
         else:
             reference = uuid.uuid4().hex[:8]
@@ -166,6 +171,7 @@ def run_bot(settings: Settings) -> int:
         repo = Repository(conn)
         repo.sync_registry(registry)
         problems = repo.totals()["problems"]
+        repo.random_problem()  # reads what /random needs from disk now, not during the first command
     finally:
         conn.close()
     if problems == 0:

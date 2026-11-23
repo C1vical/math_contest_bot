@@ -91,9 +91,14 @@ class Problems(commands.Cog):
                 "No problems loaded", f"**{series.name}** is supported, but none of its problems are loaded yet."
             )
         if year not in years:
+            # AIME became AIME I / II in 2000, AMC 10 became 10A / 10B in 2002, ...
+            relatives = [s for s in self.bot.registry.all() if s.key.startswith(series.key) and s is not series]
+            held = await self.bot.db.call(lambda repo: [s for s in relatives if year in repo.years_for(s.key)])
+            hint = f"\nFor {year}, try {', '.join(f'`{s.key}`' for s in held)}." if held else ""
             return ui.error_embed(
                 "Year not available",
-                f"There is no {year} **{series.name}** in the database.\nAvailable years: {compress_years(years)}",
+                f"There is no {year} **{series.name}** in the database.\n"
+                f"Available years: {compress_years(years)}{hint}",
             )
         numbers = await self.bot.db.call(lambda repo: repo.numbers_for(series.key, year))
         return ui.error_embed(
@@ -139,11 +144,24 @@ class Problems(commands.Cog):
 
     # ------------------------------------------------------------------ autocomplete
 
+    async def problem_autocomplete(self, interaction: discord.Interaction, current: str):
+        """Contest names, or the whole reference once it is typed in full (``AMC 10A 2019 #25``)."""
+        ref = parse_problem_reference(current, lambda text: self.bot.registry.resolve(text) is not None)
+        series = self.bot.registry.resolve(ref.contest)
+        if series is None or ref.year is None:
+            return ui.contest_choices(self.bot.registry, current)
+        label, value = f"{ref.year} {series.name}", f"{series.key} {ref.year}"
+        if ref.number is not None:
+            label, value = f"{label} Problem {ref.number}", f"{value} #{ref.number}"
+        return [app_commands.Choice(name=label, value=value)]
+
     async def contest_or_family_autocomplete(self, interaction: discord.Interaction, current: str):
         return ui.contest_choices(self.bot.registry, current, families=True)
 
     async def year_autocomplete(self, interaction: discord.Interaction, current: str):
-        series = self.bot.registry.resolve(str(getattr(interaction.namespace, "contest", "") or ""))
+        contest = str(getattr(interaction.namespace, "contest", "") or "")
+        ref = parse_problem_reference(contest, lambda text: self.bot.registry.resolve(text) is not None)
+        series = self.bot.registry.resolve(contest) or self.bot.registry.resolve(ref.contest)
         if series is None:
             return []
         years = await self.bot.db.call(lambda repo: repo.years_for(series.key))
@@ -158,7 +176,7 @@ class Problems(commands.Cog):
         year="Contest year, e.g. 2024",
         number="Problem number",
     )
-    @app_commands.autocomplete(contest=ui.contest_autocomplete, year=year_autocomplete)
+    @app_commands.autocomplete(contest=problem_autocomplete, year=year_autocomplete)
     @allowed_here()
     @per_user_cooldown()
     async def problem(
@@ -182,15 +200,15 @@ class Problems(commands.Cog):
         if year is None or number is None:
             years = await self.bot.db.call(lambda repo: repo.years_for(series.key))
             missing = (
-                "year and problem number"
+                "year and problem number are"
                 if year is None and number is None
-                else ("year" if year is None else "problem number")
+                else ("year is" if year is None else "problem number is")
             )
             await self._reply_error(
                 interaction,
                 ui.error_embed(
                     f"Which {series.name} problem?",
-                    f"The {missing} is missing. {PROBLEM_FORMAT_HELP}\n"
+                    f"The {missing} missing. {PROBLEM_FORMAT_HELP}\n"
                     f"Years available for **{series.name}**: {compress_years(years)}",
                 ),
             )
@@ -272,15 +290,19 @@ class Problems(commands.Cog):
         if interaction.type is not discord.InteractionType.component or interaction.response.is_done():
             return
         custom_id = str((interaction.data or {}).get("custom_id", ""))
-        if custom_id.startswith(ui.ANSWER_PREFIX):
-            await self._show_answer(interaction, custom_id[len(ui.ANSWER_PREFIX) :])
-            return
+        try:
+            await self._on_button(interaction, custom_id)
+        except Exception as exc:  # a listener's errors only reach the log; the user needs a reply too
+            await self.bot.on_app_command_error(interaction, exc)
+
+    async def _on_button(self, interaction: discord.Interaction, custom_id: str) -> None:
+        answer_id = custom_id[len(ui.ANSWER_PREFIX) :] if custom_id.startswith(ui.ANSWER_PREFIX) else None
         nav = ui.parse_nav_custom_id(custom_id)
         filters = RandomFilters.from_custom_id(custom_id)
-        if nav is None and filters is None:
+        if answer_id is None and nav is None and filters is None:
             return  # not ours (e.g. the contest list's pagination buttons)
 
-        owner = nav[2] if nav is not None else filters.owner  # type: ignore[union-attr]
+        owner = nav[2] if nav is not None else filters.owner if filters is not None else None
         if owner is not None and interaction.user.id != owner:
             await interaction.response.send_message(
                 f"Only <@{owner}> can use these buttons. Run `/random` or `/problem` to get your own.",
@@ -295,6 +317,9 @@ class Problems(commands.Cog):
                 "This bot's commands can't be used here (wrong channel, or you lack the required role).",
                 ephemeral=True,
             )
+            return
+        if answer_id is not None:
+            await self._show_answer(interaction, answer_id)
             return
         retry_after = self._button_retry_after(interaction)
         if retry_after is not None:

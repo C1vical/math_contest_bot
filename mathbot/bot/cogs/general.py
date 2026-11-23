@@ -21,7 +21,8 @@ HELP: dict[str, tuple[str, str]] = {
         "or everything in one box: `/problem contest:AMC 10A 2024 #5` "
         "(also `2024 AIME I P5`, `amc10a-2024-p05`).\n"
         "Contest names ignore case, spaces and punctuation and accept aliases (`aime i`, `Fall 10A`). "
-        "Start typing to pick from the list.",
+        "Start typing to pick from the list: it shows 25 entries at most, so older contests (AHSME, AJHSME, "
+        "the 2021 Fall AMCs) may only appear once you type.",
     ),
     "random": (
         "Show a random problem",
@@ -44,7 +45,7 @@ HELP: dict[str, tuple[str, str]] = {
     "stats": ("Database statistics", "Totals by source and the largest contests."),
     "admin": (
         "Maintenance (admins only)",
-        "`/admin status` - database checks, missing images and the last ingestion run.\n"
+        "`/admin status` - problem and image counts and the last ingestion run.\n"
         "`/admin sync` - register the slash commands with Discord again.",
     ),
     "help": ("This menu", "`/help` or `/help command:random`"),
@@ -88,7 +89,7 @@ class General(commands.Cog):
         name = command.lower().strip().lstrip("/")
         if name not in HELP:
             await interaction.response.send_message(
-                embed=ui.error_embed("Unknown command", f"There is no `/{name}`. Try `/help`."), ephemeral=True
+                embed=ui.error_embed("Unknown command", f"There is no `/{ui.clip(name)}`. Try `/help`."), ephemeral=True
             )
             return
         summary, details = HELP[name]

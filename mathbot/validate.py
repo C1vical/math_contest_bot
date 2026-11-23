@@ -132,6 +132,23 @@ def missing_answers(conn: sqlite3.Connection, registry: ContestRegistry) -> list
     return [(r["id"], r["missing"], r["total"]) for r in rows]
 
 
+def quick_status(repo: Repository, renderer_version: str) -> dict[str, int]:
+    """Counts that are cheap enough for a chat command.
+
+    :func:`validate` parses every statement (about 25 s on a PC, far longer on a small
+    host) and expects the rendered files on this disk, which a bot host doesn't have.
+    """
+    rows = repo.render_status(renderer_version)
+    pending = [row for row in rows if row["render_id"] is None]
+    failed = sum(1 for row in pending if row["failed_error"] is not None)
+    return {
+        **repo.totals(),
+        "renders_missing": len(pending) - failed,
+        "renders_failed": failed,
+        "renders_not_uploaded": sum(1 for row in rows if row["render_id"] is not None and not row["uploaded_at"]),
+    }
+
+
 def validate(
     repo: Repository, renders_dir: Path, renderer_version: str, *, registry: ContestRegistry | None = None
 ) -> ValidationReport:

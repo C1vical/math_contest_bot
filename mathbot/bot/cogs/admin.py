@@ -16,7 +16,7 @@ from discord.ext import commands
 from mathbot.bot import ui
 from mathbot.bot.policy import admin_only
 from mathbot.render.template import renderer_version
-from mathbot.validate import validate
+from mathbot.validate import quick_status
 
 if TYPE_CHECKING:
     from mathbot.bot.app import MathBot
@@ -31,20 +31,19 @@ class Admin(commands.GroupCog, group_name="admin", group_description="Bot mainte
     @admin_only()
     async def status(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True, thinking=True)
-        settings = self.bot.settings
-        report = await self.bot.db.call(
-            lambda repo: validate(
-                repo, settings.renders_dir, renderer_version(settings.render), registry=self.bot.registry
-            )
+        version = renderer_version(self.bot.settings.render)
+        summary, last = await self.bot.db.call(
+            lambda repo: (quick_status(repo, version), dict(row) if (row := repo.last_run()) else None)
         )
-        last = await self.bot.db.call(lambda repo: dict(row) if (row := repo.last_run()) else None)
+        without_image = summary["renders_missing"] + summary["renders_failed"]
 
         embed = discord.Embed(
             title="Bot status",
-            color=ui.COLOR if report.ok else ui.ERROR_COLOR,
-            description=f"{len(report.errors)} error(s), {len(report.warnings)} warning(s)",
+            color=ui.ERROR_COLOR if without_image else ui.COLOR,
+            description=f"{summary['problems'] - without_image:,} of {summary['problems']:,} problems have an image. "
+            "For a full check, run `python -m mathbot validate` where the images are rendered.",
         )
-        for key, value in report.summary.items():
+        for key, value in summary.items():
             embed.add_field(name=key.replace("_", " "), value=f"{value:,}", inline=True)
         if last:
             embed.add_field(
@@ -54,9 +53,6 @@ class Admin(commands.GroupCog, group_name="admin", group_description="Bot mainte
                 f"{last['failed']} failed, {last['invalid']} invalid",
                 inline=False,
             )
-        problems = [f"[{f.severity}] {f.check}: {f.message}" for f in report.errors[:8]]
-        if problems:
-            embed.add_field(name="Errors", value="\n".join(problems)[:1024], inline=False)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="sync", description="Re-register the bot's slash commands with Discord")
