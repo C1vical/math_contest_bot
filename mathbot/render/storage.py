@@ -29,6 +29,7 @@ class Storage(Protocol):
 
     def put(self, key: str, data: bytes, content_type: str, *, cache_control: str | None = None) -> None: ...
     def delete(self, key: str) -> None: ...
+    def keys(self, prefix: str) -> list[str]: ...
 
 
 class LocalStorage:
@@ -51,6 +52,11 @@ class LocalStorage:
 
     def delete(self, key: str) -> None:
         self._path(key).unlink(missing_ok=True)
+
+    def keys(self, prefix: str) -> list[str]:
+        """Keys starting with ``prefix``, sorted."""
+        keys = (p.relative_to(self.root).as_posix() for p in self.root.rglob("*") if p.is_file())
+        return sorted(key for key in keys if key.startswith(prefix))
 
 
 class S3Storage:
@@ -95,6 +101,17 @@ class S3Storage:
             self._client.delete_object(Bucket=self.bucket, Key=self.settings.object_key(key))  # type: ignore[attr-defined]
         except Exception as exc:  # see put()
             raise StorageError(f"delete of {key} failed: {exc}") from exc
+
+    def keys(self, prefix: str) -> list[str]:
+        """Keys (without ``S3_KEY_PREFIX``) starting with ``prefix``, sorted."""
+        base = len(self.settings.object_key(""))
+        try:
+            pages = self._client.get_paginator("list_objects_v2").paginate(  # type: ignore[attr-defined]
+                Bucket=self.bucket, Prefix=self.settings.object_key(prefix)
+            )
+            return sorted(item["Key"][base:] for page in pages for item in page.get("Contents", []))
+        except Exception as exc:  # see put()
+            raise StorageError(f"listing {prefix} failed: {exc}") from exc
 
 
 def build_storage(settings: Settings) -> Storage:

@@ -239,6 +239,9 @@ def test_local_storage_round_trip_and_path_safety(tmp_path):
     storage.delete("imo/a.png")
     assert not (tmp_path / "store" / "imo" / "a.png").exists()
     storage.delete("imo/a.png")  # deleting a missing object is not an error
+    storage.put("db/a.db", b"data", "x/y")
+    assert storage.keys("db/") == ["db/a.db"] and storage.keys("imo/") == []
+    assert LocalStorage(tmp_path / "missing").keys("db/") == []
     with pytest.raises(StorageError):
         storage.put("../escape.png", b"x", "image/png")
     assert not (tmp_path / "escape.png").exists()
@@ -254,6 +257,16 @@ class FakeS3:
     def delete_object(self, Bucket, Key):
         self.objects.pop((Bucket, Key), None)
 
+    def get_paginator(self, operation):
+        assert operation == "list_objects_v2"
+        return self
+
+    def paginate(self, Bucket, Prefix):
+        keys = [key for bucket, key in self.objects if bucket == Bucket and key.startswith(Prefix)]
+        yield {"Contents": [{"Key": key} for key in keys[:1]]}
+        yield {"Contents": [{"Key": key} for key in keys[1:]]}
+        yield {}  # an empty page has no Contents
+
 
 def test_s3_storage_uses_configured_bucket_and_prefix():
     fake = FakeS3()
@@ -261,6 +274,12 @@ def test_s3_storage_uses_configured_bucket_and_prefix():
     storage.put("imo/a.png", b"data", "image/png")
     stored = fake.objects[("my-bucket", "renders/imo/a.png")]
     assert stored["ContentType"] == "image/png" and "immutable" in stored["CacheControl"]
+    storage.put("db/b.db", b"data", "x/y")
+    storage.put("db/a.db", b"data", "x/y")
+    assert storage.keys("db/") == ["db/a.db", "db/b.db"]  # every page, without the key prefix
+    assert storage.keys("none/") == []
+    storage.delete("db/a.db")
+    storage.delete("db/b.db")
     storage.delete("imo/a.png")
     assert fake.objects == {}
     with pytest.raises(StorageError):

@@ -13,6 +13,7 @@ from mathbot.snapshot import (
     SnapshotError,
     _resolve,
     create_snapshot,
+    delete_older_snapshots,
     fetch_snapshot,
     inspect_database,
     publish_snapshot,
@@ -137,6 +138,88 @@ def test_publish_db_reports_a_storage_failure_instead_of_crashing(tmp_path, monk
     monkeypatch.setattr(storage_module, "build_storage", lambda _settings: Unreachable(tmp_path / "bucket"))
     assert cli_database.cmd_publish_db(argparse.Namespace(dry_run=False), settings) == 1
     assert "bucket unreachable" in capsys.readouterr().err
+
+
+OLD_TIME, NEW_TIME = "20200101T000000Z", "29990101T000000Z"
+
+
+def seed_snapshots(tmp_path):
+    """Snapshots from earlier and later publishes, and files that only look similar."""
+    bucket, local = tmp_path / "bucket" / "db", tmp_path / "snapshots"
+    bucket.mkdir(parents=True, exist_ok=True)
+    local.mkdir(parents=True, exist_ok=True)
+    old = [bucket / f"problems-{OLD_TIME}-0123456789ab.db", local / f"problems-{OLD_TIME}.db"]
+    keep = [
+        bucket / f"problems-{NEW_TIME}-0123456789ab.db",
+        local / f"problems-{NEW_TIME}.db",
+        bucket / "problems.db",
+        bucket / f"problems-{OLD_TIME}-notes.txt",
+        local / f"problems-{OLD_TIME}.db.bak",
+        tmp_path / "bucket" / f"problems-{OLD_TIME}-0123456789ab.db",  # not under db/
+    ]
+    for path in old + keep:
+        path.write_bytes(b"x")
+    return old, keep
+
+
+def test_only_older_snapshots_are_deleted(published, tmp_path):
+    snapshot, manifest, pointer = published
+    old, keep = seed_snapshots(tmp_path)
+    store = LocalStorage(tmp_path / "bucket")
+    assert delete_older_snapshots(snapshot, store) == 2
+    assert not any(path.exists() for path in old)
+    assert all(path.exists() for path in keep)
+    assert snapshot.path.is_file() and pointer.is_file() and (tmp_path / "bucket" / manifest["key"]).is_file()
+    assert fetch_snapshot(str(pointer), tmp_path / "bothost" / "problems.db") is not None
+    assert delete_older_snapshots(snapshot, store) == 0
+
+
+def run_publish_db(tmp_path, monkeypatch, storage, *, dry_run=False):
+    import argparse
+
+    from mathbot.cli import database as cli_database
+    from mathbot.render import storage as storage_module
+
+    monkeypatch.setattr(storage_module, "build_storage", lambda _settings: storage)
+    settings = load_settings({"DATA_DIR": str(tmp_path)})
+    return cli_database.cmd_publish_db(argparse.Namespace(dry_run=dry_run), settings)
+
+
+def test_publish_db_keeps_only_the_newest_snapshot(tmp_path, monkeypatch, capsys):
+    old, keep = seed_snapshots(tmp_path)
+    assert run_publish_db(tmp_path, monkeypatch, LocalStorage(tmp_path / "bucket")) == 0
+    assert "older snapshots deleted: 2" in capsys.readouterr().out
+    assert not any(path.exists() for path in old) and all(path.exists() for path in keep)
+
+
+def test_nothing_is_deleted_by_a_dry_run_or_a_failed_publish(tmp_path, monkeypatch):
+    from mathbot.render.storage import StorageError
+
+    class PointerFails(LocalStorage):
+        def put(self, key, data, content_type, *, cache_control=None):
+            if key == POINTER_KEY:
+                raise StorageError("bucket unreachable")
+            super().put(key, data, content_type, cache_control=cache_control)
+
+    old, keep = seed_snapshots(tmp_path)
+    storage = PointerFails(tmp_path / "bucket")
+    assert run_publish_db(tmp_path, monkeypatch, storage, dry_run=True) == 0
+    assert run_publish_db(tmp_path, monkeypatch, storage) == 1
+    assert all(path.exists() for path in old + keep)
+
+
+def test_a_failed_deletion_does_not_fail_the_publish(tmp_path, monkeypatch, capsys):
+    from mathbot.render.storage import StorageError
+
+    class CannotDelete(LocalStorage):
+        def delete(self, key):
+            raise StorageError("access denied")
+
+    seed_snapshots(tmp_path)
+    assert run_publish_db(tmp_path, monkeypatch, CannotDelete(tmp_path / "bucket")) == 0
+    captured = capsys.readouterr()
+    assert "published to" in captured.out and "access denied" in captured.err
+    assert (tmp_path / "bucket" / POINTER_KEY).is_file()
 
 
 class StreamingResponse:

@@ -142,8 +142,8 @@ Imported images don't expire. Keep the originals; the ones saved so far are in
 Cloudflare R2.
 
 1. On the machine that renders, run the [update commands](#updating-problems) and then
-   `python -m mathbot publish-db`. Each run also leaves a copy in `data/snapshots`,
-   which you can delete.
+   `python -m mathbot publish-db`. Only the newest snapshot is kept, in the bucket and
+   in `data/snapshots`.
 2. On the bot host, install `requirements.lock`, set `DISCORD_TOKEN`, `IMAGE_BASE_URL`
    and `DATABASE_SNAPSHOT_URL=<IMAGE_BASE_URL>/db/latest.json`, and start the bot. It
    downloads and verifies the newest snapshot at startup. Chromium isn't needed there.

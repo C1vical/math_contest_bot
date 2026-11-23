@@ -8,6 +8,9 @@ uploads it next to the images:
     db/problems-<UTC timestamp>-<sha256[:12]>.db   immutable snapshot
     db/latest.json                                  pointer, re-written each publish
 
+Once the pointer has moved, ``publish-db`` deletes the older snapshots, so only the
+newest is kept.
+
 ``latest.json`` holds ``key``, ``sha256``, ``size_bytes``, ``schema_version``,
 ``problems`` and ``created_at``. On the bot host, ``DATABASE_SNAPSHOT_URL``
 (an http(s) URL or a local path to ``latest.json``) makes startup download the
@@ -22,6 +25,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import sqlite3
 import tempfile
 from dataclasses import dataclass
@@ -44,6 +48,8 @@ MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024 * 1024
 MAX_POINTER_BYTES = 64 * 1024
 CHUNK_BYTES = 1 << 20
 _SIDECARS = ("-wal", "-shm")
+_LOCAL_NAME = re.compile(r"problems-(?P<created>\d{8}T\d{6}Z)\.db")
+_PUBLISHED_NAME = re.compile(SNAPSHOT_PREFIX + r"/problems-(?P<created>\d{8}T\d{6}Z)-[0-9a-f]{12}\.db")
 
 
 class SnapshotError(Exception):
@@ -141,6 +147,30 @@ def publish_snapshot(snapshot: Snapshot, storage: Storage) -> dict:
         cache_control="no-cache, max-age=0",
     )
     return manifest
+
+
+def delete_older_snapshots(snapshot: Snapshot, storage: Storage) -> int:
+    """Delete snapshots older than ``snapshot`` from ``storage`` and its own directory.
+
+    Call it only after :func:`publish_snapshot` succeeded: until the pointer has moved, an
+    older snapshot is the one bots download. Only files named like a snapshot are touched,
+    and a newer one (published from another machine meanwhile) is kept. Returns how many
+    were deleted.
+    """
+
+    def is_older(match: re.Match[str] | None) -> bool:
+        return match is not None and match["created"] < snapshot.created_at
+
+    deleted = 0
+    for key in storage.keys(f"{SNAPSHOT_PREFIX}/"):
+        if is_older(_PUBLISHED_NAME.fullmatch(key)):
+            storage.delete(key)
+            deleted += 1
+    for path in snapshot.path.parent.iterdir():
+        if is_older(_LOCAL_NAME.fullmatch(path.name)):
+            path.unlink()
+            deleted += 1
+    return deleted
 
 
 # --------------------------------------------------------------------------- bot host side

@@ -54,7 +54,7 @@ def cmd_migrate(args: argparse.Namespace, settings: Settings) -> int:
 
 def cmd_publish_db(args: argparse.Namespace, settings: Settings) -> int:
     from mathbot.render.storage import StorageError, build_storage
-    from mathbot.snapshot import SnapshotError, create_snapshot, publish_snapshot
+    from mathbot.snapshot import SnapshotError, create_snapshot, delete_older_snapshots, publish_snapshot
 
     common.repo(settings, common.registry(settings))  # make sure the schema is current before copying it
     try:
@@ -68,6 +68,10 @@ def cmd_publish_db(args: argparse.Namespace, settings: Settings) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     print(f"published to {storage.name} storage as {manifest['key']} (pointer: db/latest.json)")
+    try:
+        print(f"older snapshots deleted: {delete_older_snapshots(snapshot, storage)}")
+    except (StorageError, OSError) as exc:  # the new snapshot is live; the next publish tries again
+        print(f"warning: could not delete older snapshots: {exc}", file=sys.stderr)
     return 0
 
 
