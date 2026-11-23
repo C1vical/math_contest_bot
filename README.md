@@ -63,6 +63,10 @@ only for the person who ran the command.
 Difficulty is estimated from a problem's position in its paper. If a problem has no
 image, the bot shows its text.
 
+When the bot joins a server, it posts one welcome message in the main channel: the one
+Discord uses for join messages, or else the first channel where everyone can chat. For
+this, invite it with the `bot` scope and the View Channels and Send Messages permissions.
+
 For uptime monitoring, `GET /` always answers and `GET /healthz` returns 503 until
 Discord and the database are ready. The port is `PORT` (default 8080).
 

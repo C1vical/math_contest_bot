@@ -27,14 +27,19 @@ COGS = (
     "mathbot.bot.cogs.admin",
 )
 
+WELCOME = (
+    "Thanks for adding **Math Contest Bot**! Use `/random` for a random problem, "
+    "`/problem` for a specific one, or `/help` to see everything."
+)
+
 
 class MathBot(commands.Bot):
     """The Discord client: settings, registry, database access and image delivery for the cogs."""
 
     def __init__(self, settings: Settings, registry: ContestRegistry, health: HealthState) -> None:
         # Commands and buttons arrive whatever the intents. Servers, channels and roles are
-        # needed for permissions and the announcement; messages and other activity are not
-        # requested, as PRIVACY.md says. The prefix is never matched.
+        # needed for permissions, the welcome and the announcement; messages and other activity
+        # are not requested, as PRIVACY.md says. The prefix is never matched.
         super().__init__(
             command_prefix=commands.when_mentioned, intents=discord.Intents(guilds=True), help_command=None
         )
@@ -86,6 +91,20 @@ class MathBot(commands.Bot):
         except discord.HTTPException as exc:
             log.warning("could not send the online announcement", extra={"error": str(exc)})
 
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        """Say hello once in the main channel of a server that has just added the bot."""
+        bot_settings = self.settings.bot
+        if bot_settings.guild_id not in (None, guild.id):
+            return  # the commands are registered in another server only
+        channel = main_channel(guild, bot_settings.allowed_channel_ids)
+        if channel is None:
+            log.info("joined a server without a channel to say hello in")
+            return
+        try:
+            await channel.send(WELCOME)
+        except discord.HTTPException as exc:
+            log.warning("could not send the welcome message", extra={"error": str(exc)})
+
     async def on_disconnect(self) -> None:
         self.health.ready = False
 
@@ -131,6 +150,25 @@ class MathBot(commands.Bot):
             )
             message = f"Something went wrong on my side. If it keeps happening, mention reference `{reference}`."
         await respond_ephemeral(interaction, message)
+
+
+def main_channel(guild: discord.Guild, allowed_ids: frozenset[int] = frozenset()) -> discord.TextChannel | None:
+    """Where Discord posts its own join messages, else the first channel everyone can chat in.
+
+    Only channels the bot can post in, and only those in ``allowed_ids`` unless it is empty.
+    """
+
+    def can_post(channel: discord.TextChannel, who: discord.Member | discord.Role) -> bool:
+        permissions = channel.permissions_for(who)
+        return permissions.view_channel and permissions.send_messages
+
+    everyone = [c for c in guild.text_channels if can_post(c, guild.default_role)]  # no staff or read-only channels
+    for channel in (guild.system_channel, *everyone):
+        if channel is None or (allowed_ids and channel.id not in allowed_ids):
+            continue
+        if can_post(channel, guild.me):
+            return channel
+    return None
 
 
 async def respond_ephemeral(interaction: discord.Interaction, message: str) -> None:

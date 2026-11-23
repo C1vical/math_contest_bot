@@ -330,6 +330,79 @@ def test_global_sync_leaves_global_commands_to_the_tree(tmp_path, registry):
     assert calls == [("sync", None)]
 
 
+VIEW_AND_SEND = discord.Permissions(view_channel=True, send_messages=True)
+VIEW_ONLY = discord.Permissions(view_channel=True)
+STAFF, RULES, CHAT, JOINS = 20, 21, 22, 23  # channel ids, in the order Discord shows them
+
+
+def _join(tmp_path, registry, monkeypatch, *, system=None, bot_can_post=True, send_fails=False, **env):
+    """Ids of the channels that get a message when the bot joins a (real) discord.Guild."""
+    bot, _ = _bot_with_fake_discord(tmp_path, registry, **env)
+    sent: list[int] = []
+
+    async def send(channel, content):
+        if send_fails:
+            raise discord.Forbidden(types.SimpleNamespace(status=403, reason="Forbidden"), "Missing Access")
+        assert "/random" in content
+        sent.append(channel.id)
+
+    monkeypatch.setattr(discord.TextChannel, "send", send)
+
+    def deny_everyone(permissions):
+        return [{"id": "7", "type": 0, "allow": "0", "deny": str(permissions.value)}]
+
+    overwrites = {STAFF: deny_everyone(VIEW_ONLY), RULES: deny_everyone(discord.Permissions(send_messages=True))}
+    allowed = str((VIEW_AND_SEND if bot_can_post else VIEW_ONLY).value)
+    role = {"color": 0, "hoist": False, "managed": False, "mentionable": False, "permissions": allowed}
+    me = {"id": "42", "username": "bot", "discriminator": "0", "avatar": None}
+    data = {
+        "id": "7",
+        "name": "guild",
+        "owner_id": "1",
+        "system_channel_id": str(system) if system else None,
+        "roles": [role | {"id": "7", "name": "@everyone", "position": 0}],
+        "channels": [
+            {"id": str(i), "type": 0, "name": "c", "position": n, "permission_overwrites": overwrites.get(i, [])}
+            for n, i in enumerate((STAFF, RULES, CHAT, JOINS))
+        ],
+        "members": [
+            {
+                "user": me,
+                "roles": [],
+                "joined_at": "2026-01-01T00:00:00+00:00",
+                "deaf": False,
+                "mute": False,
+                "flags": 0,
+            }
+        ],
+    }
+
+    async def go():
+        bot._connection.user = discord.ClientUser(state=bot._connection, data=me)
+        await bot.on_guild_join(bot._connection._add_guild_from_data(data))
+        await bot.close()
+
+    run(go())
+    return sent
+
+
+def test_a_new_server_gets_one_welcome_in_its_main_channel(tmp_path, registry, monkeypatch):
+    assert _join(tmp_path, registry, monkeypatch, system=JOINS) == [JOINS]
+    # No channel for join messages: the first one everyone can chat in, not staff or rules.
+    assert _join(tmp_path, registry, monkeypatch) == [CHAT]
+    # A join-message channel the bot cannot post in falls back the same way.
+    assert _join(tmp_path, registry, monkeypatch, system=RULES) == [CHAT]
+
+
+def test_the_welcome_is_skipped_where_the_bot_cannot_post_or_work(tmp_path, registry, monkeypatch):
+    assert _join(tmp_path, registry, monkeypatch, system=JOINS, bot_can_post=False) == []
+    assert _join(tmp_path, registry, monkeypatch, system=JOINS, send_fails=True) == []  # only logged
+    assert _join(tmp_path, registry, monkeypatch, system=JOINS, GUILD_ID="123") == []
+    assert _join(tmp_path, registry, monkeypatch, system=JOINS, GUILD_ID="7") == [JOINS]
+    assert _join(tmp_path, registry, monkeypatch, system=JOINS, ALLOWED_CHANNEL_IDS="999") == []
+    assert _join(tmp_path, registry, monkeypatch, system=JOINS, ALLOWED_CHANNEL_IDS=str(CHAT)) == [CHAT]
+
+
 def test_only_the_person_who_ran_the_command_can_use_its_buttons(repo, bot):
     amc(repo)
     client = bot()
