@@ -23,7 +23,7 @@ from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
-from mathbot.contests import AOPS_PROVIDERS, ContestSeries, edition_id
+from mathbot.contests import AOPS_PROVIDERS, ContestSeries, edition_id, problem_id
 from mathbot.db.repo import INSERTED, UNCHANGED, UPDATED, Repository
 from mathbot.htmlnorm import InvalidContentError, normalize_fragment
 from mathbot.http import HttpError, RobotsDisallowedError, SourceBlockedError
@@ -349,7 +349,12 @@ class Ingestor:
         aops = series.provider in AOPS_PROVIDERS
         for parsed in result.problems:
             try:
-                content = normalize_fragment(parsed.statement_html, parsed.source_url, aops=aops)
+                content = normalize_fragment(
+                    parsed.statement_html,
+                    parsed.source_url,
+                    aops=aops,
+                    problem_id=problem_id(series.key, ref.year, parsed.number),
+                )
             except InvalidContentError as exc:
                 self._error(
                     report,

@@ -10,7 +10,10 @@ Raw source content is stored untouched elsewhere; this module produces the
 * LaTeX survives: MathJax ``\\(...\\)`` text is left alone and AoPS LaTeX
   images keep their ``alt`` attribute, which holds the TeX source;
 * TeX that an AoPS page shows as plain text is made typesettable (``tex.py``), an ``<img>``
-  tag it shows as text becomes the image, and collapsed forum remarks are removed.
+  tag it shows as text becomes the image, collapsed forum remarks are removed, and the
+  size and baseline of its formula pictures are corrected (``formulas.py``), spaces between
+  a formula and the punctuation after it and empty paragraphs at the end are dropped,
+  and answer choices get a paragraph of their own.
 """
 
 from __future__ import annotations
@@ -22,6 +25,8 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 
+from mathbot.corrections import correct
+from mathbot.formulas import fix_formula_images
 from mathbot.tex import repair_aops_tex
 
 _DROP_TAGS = ("script", "style", "noscript", "iframe", "object", "embed", "form", "input", "button", "link", "meta")
@@ -34,6 +39,9 @@ _ESCAPED_IMG = re.compile(
     r'(?:\s+alt\s*=\s*"([^"]*)")?\s*/?>',
     re.IGNORECASE,
 )
+_SPACED_PUNCTUATION = re.compile(r"\s+(?=[,.;?!](?:\s|$))(?!\.\s*\.)")
+# TeX whose first words are the label of answer choice (A).
+_FIRST_CHOICE = re.compile(r"\$\s*(?:\\\w+\s*)?[{(\s~]*\(?A\)")
 _URL_ATTRS = ("src", "href", "xlink:href")
 # AoPS renders TeX to images; the alt text is the TeX source.
 _LATEX_IMG_CLASSES = {"latex", "latexcenter", "asy-image"}
@@ -91,11 +99,52 @@ def _restore_escaped_images(soup: BeautifulSoup) -> None:
         node.replace_with(*pieces, NavigableString(source[position:]))
 
 
-def normalize_fragment(fragment: str, base_url: str, *, aops: bool = False) -> NormalizedContent:
+def _close_up_punctuation(soup: BeautifulSoup) -> None:
+    """Remove the space a page leaves between a formula picture and the punctuation after it,
+    where the line could break. (Not before ":", which is also a ratio.)"""
+    for image in soup.find_all("img", class_="latex"):
+        after = image.next_sibling
+        if isinstance(after, NavigableString) and (space := _SPACED_PUNCTUATION.match(after)):
+            after.replace_with(after[space.end() :])
+
+
+def _separate_choices(soup: BeautifulSoup) -> None:
+    """Start a new paragraph at answer choices that follow the question in its own paragraph."""
+    for image in soup.find_all("img", class_="latex"):
+        paragraph, alt = image.parent, str(image.get("alt") or "")
+        if paragraph.name != "p" or not (_FIRST_CHOICE.match(alt) and "(B)" in alt):
+            continue
+        rest = list(image.next_siblings)
+        if "(E)" not in alt and not any(isinstance(n, Tag) and "(E)" in str(n) for n in rest):
+            continue
+        before = [n for n in image.previous_siblings if isinstance(n, Tag) or n.strip()]
+        if not before or (isinstance(before[0], Tag) and before[0].name in ("br", "p", "div", "center")):
+            continue
+        if isinstance(before[0], Tag) and "latexcenter" in (before[0].get("class") or []):
+            continue
+        choices = soup.new_tag("p")
+        paragraph.insert_after(choices)
+        choices.extend([image, *rest])
+
+
+def _drop_trailing_spacers(soup: BeautifulSoup) -> None:
+    """Remove the empty paragraphs (``<p><br/></p>``) that leave a blank band under many wiki statements,
+    and the rules between the sections of a page."""
+    for node in reversed(list(soup.contents)):
+        if node.get_text(strip=True) or (isinstance(node, Tag) and (node.name == "img" or node.find("img"))):
+            return
+        if not isinstance(node, Tag) or node.name in ("p", "br", "div", "hr"):
+            node.extract()
+
+
+def normalize_fragment(
+    fragment: str, base_url: str, *, aops: bool = False, problem_id: str | None = None
+) -> NormalizedContent:
     """Sanitize ``fragment`` and return its normalized HTML, text and hash.
 
     ``aops`` repairs markup that AoPS left unrendered; other sources' text is never touched.
-    Both the live ingestion and the legacy import set it for every AoPS provider.
+    Both the live ingestion and the legacy import set it for every AoPS provider. They also
+    pass the ``problem_id`` of a statement, which applies its entry in ``corrections.py``.
 
     Raises :class:`InvalidContentError` when nothing meaningful is left, so an
     empty parser result can never be stored as a problem.
@@ -134,8 +183,15 @@ def normalize_fragment(fragment: str, base_url: str, *, aops: bool = False) -> N
     if aops:
         _restore_escaped_images(soup)
         repair_aops_tex(soup)
+        fix_formula_images(soup)
+        _close_up_punctuation(soup)
+        _separate_choices(soup)
+        _drop_trailing_spacers(soup)
 
     html = str(soup).strip()
+    if problem_id is not None and (corrected := correct(problem_id, html)) != html:
+        soup = _soup(corrected)
+        html = str(soup).strip()
     text = extract_text(soup)
 
     has_image = soup.find("img") is not None

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from mathbot.contests import ContestRegistry
+from mathbot.corrections import CORRECTIONS, correct
 from mathbot.db.repo import Repository
 from mathbot.htmlnorm import MIN_TEXT_CHARS
 from mathbot.tex import unrendered_tex
@@ -123,6 +124,15 @@ def statements_with_unrendered_tex(conn: sqlite3.Connection) -> list[tuple[str, 
     return [(r["id"], ", ".join(found)) for r in rows if (found := unrendered_tex(r["statement_html"]))]
 
 
+def pending_corrections(conn: sqlite3.Connection) -> list[str]:
+    """Problems whose entry in ``corrections.py`` would still change the stored statement."""
+    rows = conn.execute(
+        f"SELECT id, statement_html FROM problems WHERE id IN ({','.join('?' * len(CORRECTIONS))}) ORDER BY id",
+        list(CORRECTIONS),
+    )
+    return [r["id"] for r in rows if correct(r["id"], r["statement_html"]) != r["statement_html"]]
+
+
 def missing_answers(conn: sqlite3.Connection, registry: ContestRegistry) -> list[tuple[str, int, int]]:
     """``(edition id, without answer, problems)`` for multiple-choice editions missing answers."""
     keys = [s.id for s in registry.all(include_disabled=True) if s.source.get("multiple_choice")]
@@ -225,6 +235,8 @@ def validate(
         add(WARNING, "tex-delimiters", f"{problem_id}: {detail}")
     for problem_id, detail in statements_with_unrendered_tex(conn):
         add(WARNING, "unrendered-tex", f"{problem_id}: {detail}")
+    for problem_id in pending_corrections(conn):
+        add(WARNING, "pending-correction", f"{problem_id}: import or ingest it again to apply corrections.py")
     if registry is not None:
         for edition, missing, total in missing_answers(conn, registry):
             add(WARNING, "missing-answer", f"{edition}: {missing} of {total} multiple-choice problems have no answer")

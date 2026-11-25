@@ -137,7 +137,7 @@ def test_escaped_dollars_in_math_and_asymptote_code_are_untouched(fragment):
     [
         "<p>It costs $5 and $6.</p>",
         "<p>It costs $5 and $x^2$ more.</p>",
-        f'<p>Paid $<img alt="$x$" class="latex" src="{L}"/> and $<img alt="$y$" class="latex" src="{L}"/>.</p>',
+        f'<p>Paid $<img alt="$x$" class="latex" src="{L}" style="vertical-align: -1px"/> and $5.</p>',
         "<p>[Note: see [x2] and [asy].]</p>",
         "<p>An unfinished \\begin{align*} and [katex] tag.</p>",
         "<p>Split [katex]a<b>b</b>[/katex] tag.</p>",  # markup inside: left for validate

@@ -37,7 +37,11 @@ Contest pages (pandoc output, UTF-8)
   * The 2019 Pascal page closes ``<li>`` early for every question that has a
     diagram, so the closing sentence and the answer choices become loose
     children of the ``<ol>``. Loose children are appended to the preceding
-    question (the pre-2.0 scraper did the same for a stray ``<ol>``).
+    question (the pre-2.0 scraper did the same for a stray ``<ol>``). On the
+    2018 Cayley and Fermat pages that sentence is loose text, not a paragraph.
+  * The pages draw a border around every table cell with their own stylesheet,
+    which is not kept; it is copied onto the cells (a grid with empty cells
+    can't be read without it).
   * The 2017 and 2021 Pascal pages never close the Part A list (2017 also
     opens it twice), so the Part B / C headings and lists are nested inside
     it. Headings found inside a list are honoured as if at body level.
@@ -60,9 +64,10 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
+from html import escape
 from urllib.parse import urljoin
 
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup, NavigableString, Tag
 
 from mathbot.contests import CEMC, ContestSeries, normalize_alias
 from mathbot.http import HttpError, PoliteClient
@@ -83,7 +88,11 @@ _ANSWER = re.compile(r"^\s*Answer\s*:\s*(?:\\\(\s*)?\(?\s*([A-Za-z]|-?[\d.,/]+)\
 
 # Part of every edition fingerprint, so incremental runs re-parse unchanged pages after a
 # parser change. Bump it whenever parsing output can change for an existing page.
-PARSER_VERSION = 2  # 2: answers in the 2024+ "smallcaps" format
+# 2: answers in the 2024+ "smallcaps" format; 3: loose text of a question is kept, table borders
+PARSER_VERSION = 3
+
+_CELL_BORDER = re.compile(r"\btd\s*\{[^}]*\bborder\s*:\s*1px")
+_CELL_STYLE = "border: 1px solid #808080"
 
 # (series key, year) -> 1-based indexes of parsed items that are really a
 # continuation of the previous question (verified by reading the page).
@@ -173,11 +182,20 @@ def _parse_page(html: str) -> tuple[BeautifulSoup, Tag | None]:
     return soup, body
 
 
+def _keep_table_borders(soup: BeautifulSoup) -> None:
+    if not any(_CELL_BORDER.search(str(style.string or "")) for style in soup.find_all("style")):
+        return
+    for cell in soup.find_all(["td", "th"]):
+        own = str(cell.get("style") or "").strip()
+        cell["style"] = f"{_CELL_STYLE}; {own}" if own else _CELL_STYLE
+
+
 def parse_contest_page(html: str, *, merge_into_previous: frozenset[int] = frozenset()) -> ContestPage:
     """Extract ``(number, section, html)`` for every question on a contest page."""
     soup, body = _parse_page(html)
     if body is None:
         raise CemcParseError("page has no <body>")
+    _keep_table_borders(soup)
 
     declared = _DECLARED_COUNT.search(body.get_text(" "))
     page = ContestPage(
@@ -196,11 +214,24 @@ def parse_contest_page(html: str, *, merge_into_previous: frozenset[int] = froze
             state["saw_heading"] = True
             state["section"] = match.group(1).upper() if match.group(1) else None
 
+    def spill(markup: str, *, joined: bool) -> None:
+        """Add loose markup to the last question; ``joined`` continues a line of loose text."""
+        spilled = items[-1][3]
+        if joined and spilled and not spilled[-1].startswith(("<ol", "<p", "<div")):
+            spilled[-1] += markup
+        else:
+            spilled.append(markup)
+
     def question_list(ol: Tag) -> None:
         start = _int_attr(ol, "start")
         first = len(items)
-        for node in ol.find_all(recursive=False):
-            if node.name == "h2":
+        for node in list(ol.children):
+            if type(node) is NavigableString:  # loose text: see the last case
+                if len(items) > first and state["in_questions"] and node.strip():
+                    spill(escape(str(node), quote=False), joined=True)
+            elif not isinstance(node, Tag):
+                continue
+            elif node.name == "h2":
                 # The list was never closed (2017 / 2021 Pascal): the next part's heading
                 # and its list are nested inside this one. Carry on as if at body level.
                 heading(node)
@@ -218,7 +249,8 @@ def parse_contest_page(html: str, *, merge_into_previous: frozenset[int] = froze
                 # question with a diagram), leaving the rest of the question - often the
                 # answer choices - as loose children of the list. It belongs to the
                 # question just before it.
-                items[-1][3].append(str(node))
+                before = node.previous_sibling
+                spill(str(node), joined=type(before) is NavigableString and bool(before.strip()))
 
     for child in body.find_all(recursive=False):
         if child.name == "h2":

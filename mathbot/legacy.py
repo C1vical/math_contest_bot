@@ -202,7 +202,7 @@ def import_legacy(
         edition_url, edition_identifier = locator.edition(series, year)
         source_url = locator.problem(series, year, number, edition_url)
         try:
-            content = normalize_fragment(statement, source_url, aops=series.provider in AOPS_PROVIDERS)
+            content = normalize_fragment(statement, source_url, aops=series.provider in AOPS_PROVIDERS, problem_id=pid)
         except InvalidContentError as exc:
             report.invalid.append((old_id, str(exc)))
             continue

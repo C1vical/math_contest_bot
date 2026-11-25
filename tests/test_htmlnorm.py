@@ -103,5 +103,5 @@ def test_collapsed_forum_remarks_are_removed_from_aops_posts():
         '<a class="cmty-hide-heading" href="#" onclick="$(this).next().toggle()">Remark.</a>'
         '<div class="cmty-hide-content" style="display:none">It seems that this is a two-part problem.</div>'
     )
-    assert normalize_fragment(post, BASE, aops=True).html == "State a general law and prove it.<br/>"
+    assert normalize_fragment(post, BASE, aops=True).html == "State a general law and prove it."
     assert "Remark" in normalize_fragment(post, BASE).html

@@ -9,6 +9,9 @@ text into something the renderer typesets:
     [katex]...[/katex], [mathjax]...          -> \\( ... \\)
     \\$5                                       -> $5 (prose only)
 
+It also typesets answer choices whose picture is wider than the page, which would be
+shrunk to fit (:func:`typeset_choices`).
+
 A plain ``$`` in prose is never a math delimiter: it is money there ("$5 and $6").
 :func:`unrendered_tex` reports TeX source that would still be drawn as text.
 """
@@ -46,6 +49,12 @@ _COMPILE_ERROR = re.compile(r"^\s*(?P<tex>.+?)\s*\(Error compiling LaTeX\b.*\)\s
 
 # A "\\" line break, and everything else that decides how deeply nested it is.
 _LINE_TOKEN = re.compile(r"\\begin\b|\\end\b|(?P<newline>\\\\\*?(?:\[-?[\d.]+\s*[a-z]{2}\])?)|\\.|[{}]", re.DOTALL)
+
+# The label that starts an answer choice: \textbf{(A)}, \mathrm{(A) \ }, \text{(A) always have }...
+_CHOICE_LABEL = re.compile(r"\\(?:textbf|mathbf|mathrm|textrm|text)\s*\{\s*\(\s*([A-E])\s*\)")
+_CHOICE_GAP = re.compile(r"(?:\\qquad|\\quad|\\\\|\\ |~|\s)+$")
+# Drawn at AoPS's size times 1.25 (see template.py), a formula this wide no longer fits the page.
+MAX_FORMULA_WIDTH = 916
 
 _TAG = re.compile(r"<[^>]*>")
 _ENVIRONMENT_START = re.compile(r"\\begin\{[a-zA-Z]+\*?\}")
@@ -157,12 +166,68 @@ def _replacement(soup: BeautifulSoup, match: re.Match[str]) -> list[Tag | Naviga
     return _nodes(soup, lines) if lines else None
 
 
+def _split_choices(tex: str) -> tuple[list[str], bool] | None:
+    """The five answer choices in ``tex`` and whether each stood on its own line, or None."""
+    starts, depth = [], 0
+    labels = {m.start(): m for m in _CHOICE_LABEL.finditer(tex)}
+    for match in re.finditer(r"\\[{}\\]|[{}]|\\[a-zA-Z]+", tex):
+        if match.start() in labels and depth == 0:
+            starts.append(labels[match.start()])
+        if match.group() == "{":
+            depth += 1
+        elif match.group() == "}":
+            depth -= 1
+    if [m[1] for m in starts] != list("ABCDE") or _CHOICE_GAP.sub("", tex[: starts[0].start()]):
+        return None
+    ends = [m.start() for m in starts[1:]] + [len(tex)]
+    choices, own_line = [], True
+    for index, (start, end) in enumerate(zip([m.start() for m in starts], ends, strict=True)):
+        choice = _CHOICE_GAP.sub("", tex[start:end])
+        if index < 4 and "\\\\" not in tex[start + len(choice) : end]:
+            own_line = False
+        if _DELIMITER.search(choice) or len(_split_lines(choice)) != 1:
+            return None
+        choices.append(choice)
+    return choices, own_line
+
+
+def typeset_choices(soup: BeautifulSoup, image: Tag, source: str) -> bool:
+    """Replace ``image`` with the answer choices in ``source`` (its TeX), one formula per choice.
+
+    They are drawn at the size of the text and wrap like words. Returns False, changing
+    nothing, when ``source`` is not exactly the five choices (A)-(E).
+    """
+    tex = mathjax_tex(source)
+    found = _split_choices(tex[2:-2].strip()) if tex else None
+    if found is None:
+        return False
+    choices, own_line = found
+    nodes: list[Tag | NavigableString] = []
+    before = image.previous_sibling
+    if isinstance(before, NavigableString) and before.strip():  # they share the question's paragraph
+        nodes.append(soup.new_tag("br"))
+    for index, choice in enumerate(choices):
+        if index:
+            nodes.append(soup.new_tag("br") if own_line else NavigableString("\u2003\u2003 "))
+        nodes.append(NavigableString(f"\\(\\displaystyle {choice}\\)"))
+    image.replace_with(*nodes)
+    return True
+
+
+def _typeset_wide_choices(soup: BeautifulSoup) -> None:
+    for image in soup.find_all("img", class_="latex"):
+        width = str(image.get("width") or "")
+        if width.isdigit() and int(width) > MAX_FORMULA_WIDTH:
+            typeset_choices(soup, image, str(image.get("alt") or ""))
+
+
 def repair_aops_tex(soup: BeautifulSoup) -> None:
     """Make the TeX an AoPS page shows as plain text typesettable, in place (see the module docstring).
 
     Repairing an already repaired statement changes nothing.
     """
     _replace_compile_errors(soup)
+    _typeset_wide_choices(soup)
     soup.smooth()
     nodes = _text_nodes(soup)
     edits: dict[int, list[tuple[int, int, list[Tag | NavigableString]]]] = {}
