@@ -27,6 +27,9 @@ COGS = (
     "mathbot.bot.cogs.admin",
 )
 
+COMMAND_INSTALLS = app_commands.AppInstallationType(guild=True, user=True)
+COMMAND_CONTEXTS = app_commands.AppCommandContext(guild=True, dm_channel=True, private_channel=True)
+
 WELCOME = (
     "Thanks for adding **Math Contest Bot**! Use `/random` for a random problem, "
     "`/problem` for a specific one, or `/help` to see everything."
@@ -40,8 +43,14 @@ class MathBot(commands.Bot):
         # Commands and buttons arrive whatever the intents. Servers, channels and roles are
         # needed for permissions, the welcome and the announcement; messages and other activity
         # are not requested, as PRIVACY.md says. The prefix is never matched.
+        # Commands can be added to a server or to a user's own account; the latter is what
+        # makes them work in group DMs, which a bot cannot join. Cogs may narrow this.
         super().__init__(
-            command_prefix=commands.when_mentioned, intents=discord.Intents(guilds=True), help_command=None
+            command_prefix=commands.when_mentioned,
+            intents=discord.Intents(guilds=True),
+            help_command=None,
+            allowed_installs=COMMAND_INSTALLS,
+            allowed_contexts=COMMAND_CONTEXTS,
         )
         self.settings = settings
         self.registry = registry

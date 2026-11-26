@@ -250,6 +250,27 @@ def test_bot_loads_all_cogs_and_registers_expected_commands(tmp_path, registry):
     assert not {"gimme", "info"} & names  # pre-2.0 aliases are gone
 
 
+def test_commands_can_be_added_to_a_user_account_for_group_dms(tmp_path, registry):
+    """What Discord is told: everything but /admin can be installed by a user and used in
+    servers, the bot's DMs and group DMs (1 = user install; contexts 0, 1, 2 = server, bot DM,
+    group DM or other private chat). /admin is for servers that added the bot."""
+    settings = load_settings({"DATA_DIR": str(tmp_path), "SYNC_COMMANDS": "false"})
+
+    async def go():
+        bot = MathBot(settings, registry, HealthState())
+        await bot.setup_hook()
+        payloads = {command.name: command.to_dict(bot.tree) for command in bot.tree.get_commands()}
+        await bot.close()
+        return payloads
+
+    payloads = asyncio.run(go())
+    admin = payloads.pop("admin")
+    assert (admin["integration_types"], admin["contexts"]) == ([0], [0])
+    assert {name: (p["integration_types"], p["contexts"]) for name, p in payloads.items()} == {
+        name: ([0, 1], [0, 1, 2]) for name in ("problem", "random", "contests", "contest", "stats", "help")
+    }
+
+
 def test_the_bot_receives_no_messages_or_member_activity(tmp_path, registry):
     """PRIVACY.md promises this; update it before asking Discord for more."""
     bot = MathBot(load_settings({"DATA_DIR": str(tmp_path)}), registry, HealthState())

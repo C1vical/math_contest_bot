@@ -34,7 +34,7 @@ to change:
 | Variable | Purpose |
 |---|---|
 | `DISCORD_TOKEN` | Bot token |
-| `GUILD_ID` | Sync slash commands to one server instantly instead of globally |
+| `GUILD_ID` | Sync slash commands to one server instantly instead of globally (turns off [group DMs](#group-dms)) |
 | `ALLOWED_CHANNEL_IDS`, `ALLOWED_ROLE_IDS` | Where and by whom commands work (empty: no restriction) |
 | `ADMIN_ROLE_IDS`, `ADMIN_USER_IDS` | Who may use `/admin` (both empty: members with Manage Server) |
 | `ENABLE_CONTESTS`, `DISABLE_CONTESTS` | Turn optional contests on (`CJMO,CMOQR,GAUSS7`) or default ones off |
@@ -66,6 +66,26 @@ image, the bot shows its text.
 When the bot joins a server, it posts one welcome message in the main channel: the one
 Discord uses for join messages, or else the first channel where everyone can chat. For
 this, invite it with the `bot` scope and the View Channels and Send Messages permissions.
+
+### Group DMs
+
+Bots can't join group DMs, so there the commands come from each person's own install
+of the app instead. Everything except `/admin` works this way, including the buttons,
+and the replies are visible to everyone in the chat.
+
+1. In the [Developer Portal](https://discord.com/developers/applications), open the
+   app's **Installation** page, tick **User Install**, and under **Default Install
+   Settings** give User Install the `applications.commands` scope.
+2. Leave `GUILD_ID` empty so the commands are registered globally. They can take up to
+   an hour to appear after the bot restarts.
+3. Each person who wants to run commands opens the install link from that page, picks
+   **Add to My Apps**, then types `/` in the group DM. Others in the chat can see the
+   results and press **Show answer** without installing anything.
+
+In servers that haven't added the bot, the same install lets people use the commands
+too, though Discord may show the replies only to them. `ALLOWED_CHANNEL_IDS` and
+`ALLOWED_ROLE_IDS` also apply here: if either is set, the commands won't work in group
+DMs, which have no matching channel IDs or roles.
 
 For uptime monitoring, `GET /` always answers and `GET /healthz` returns 503 until
 Discord and the database are ready. The port is `PORT` (default 8080).

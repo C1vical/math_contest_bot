@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Math Contest Bot**. Last updated: November 23, 2026
+**Math Contest Bot**. Last updated: November 25, 2026
 
 This policy explains what data Math Contest Bot (the "Bot") handles when you use it on
 Discord. It covers the official Bot run by the maintainers of
@@ -12,14 +12,14 @@ other people can run their own copies; those copies are their operators' respons
 - The Bot's database holds math problems only. It has no user accounts, profiles or
   usage history.
 - The Bot works through slash commands and buttons. It doesn't receive the messages you
-  send in servers or direct messages.
+  send in servers, direct messages or group DMs.
 - Your data is never sold, used for advertising, or used to train AI models.
 
 ## What the Bot handles
 
 | Data | Why | How long |
 |---|---|---|
-| Your user ID, basic profile details such as your username, your roles and permissions, the server and channel, and the options you chose, sent by Discord when you use a command or button | To reply, and to check whether you may use the command there | While the command is being handled |
+| Your user ID, basic profile details such as your username, your roles and permissions, the server, channel or group DM, and the options you chose, sent by Discord when you use a command or button | To reply, and to check whether you may use the command there | While the command is being handled |
 | Your user ID and the time you used a command or button | To limit how often commands can be used | In memory; gone when the Bot restarts |
 | A channel's ID and the last 50 problems shown there | So `/random` avoids repeats | In memory; gone when the Bot restarts |
 | Your user ID, and the filters you gave `/random`, inside the buttons under a problem | So only you can use your Previous, Next and Another random buttons | Stored by Discord as part of the Bot's message, until that message is deleted |
@@ -46,7 +46,8 @@ policies.
   you or to have it deleted. Include your Discord user ID.
 - **Delete the Bot's messages:** anyone with Manage Messages can delete them, which also
   removes the user ID in their buttons.
-- **Stop using the Bot:** server admins can remove it at any time. Data held in memory
+- **Stop using the Bot:** server admins can remove it at any time. If you added it to
+  your own account, remove it under User Settings > Authorized Apps. Data held in memory
   is cleared when the Bot restarts.
 
 ## Security

@@ -162,6 +162,23 @@ def test_commands_work_in_direct_messages(drive):
     assert all(reply.ok for reply in drive(scenario))
 
 
+def test_commands_work_in_group_dms(drive):
+    """Bots cannot join group DMs; the commands arrive from a user's own install of the app.
+    Replies are public there, and the buttons and the contest list's pages still work."""
+
+    async def scenario(sim):
+        random = await sim.run("random", {}, group_dm=True)
+        nav = await sim.press("mathbot:nav:+1:1:amc10a-2024-p01", group_dm=True)
+        answer = await sim.press(f"{ui.ANSWER_PREFIX}amc10a-2024-p01", user=2, group_dm=True)
+        listing = await sim.run("contests", {}, group_dm=True)
+        return random, nav, answer, listing
+
+    random, nav, answer, listing = drive(scenario)
+    assert all(reply.ok for reply in (random, nav, answer, listing))
+    assert not random.ephemeral and not nav.ephemeral and not listing.messages[0].get("flags", 0) & 64
+    assert answer.ephemeral and "||C||" in answer.text
+
+
 def test_slow_counting_commands_are_acknowledged_before_the_database_is_read(drive):
     async def scenario(sim):
         order = []

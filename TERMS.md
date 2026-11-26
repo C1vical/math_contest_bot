@@ -1,8 +1,8 @@
 # Terms of Service
 
-**Math Contest Bot**. Last updated: November 23, 2026
+**Math Contest Bot**. Last updated: November 25, 2026
 
-By adding Math Contest Bot (the "Bot") to a Discord server or using it, you agree to
+By adding Math Contest Bot (the "Bot") to a Discord server or your account, or using it, you agree to
 these terms. If you don't agree, don't use the Bot. They cover the official Bot run by
 the maintainers ("we") of
 [this repository](https://github.com/C1vical/math_contest_bot).
@@ -46,7 +46,8 @@ removed, [contact us](#contact) and we will review your request promptly.
 ## Availability
 
 We may change, pause or shut down the Bot, or block a user or server that breaks these
-terms, at any time. Server admins can remove the Bot at any time.
+terms, at any time. Server admins can remove the Bot at any time, and you
+can remove it from your account at any time.
 
 ## No warranty
 

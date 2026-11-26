@@ -22,6 +22,10 @@ if TYPE_CHECKING:
     from mathbot.bot.app import MathBot
 
 
+# Servers only: not offered to users who add the bot to their own account, nor shown in DMs
+# or group DMs. Every flag is explicit because unset ones fall back to the bot's defaults.
+@app_commands.allowed_installs(guilds=True, users=False)
+@app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
 class Admin(commands.GroupCog, group_name="admin", group_description="Bot maintenance (admins only)"):
     def __init__(self, bot: MathBot) -> None:
         self.bot = bot

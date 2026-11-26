@@ -192,6 +192,7 @@ class DiscordSim:
         roles=(),
         message_id: str | None = None,
         dm: bool = False,
+        group_dm: bool = False,
     ) -> Reply:
         self.current = reply = Reply()
         self._is_autocomplete = kind == AUTOCOMPLETE
@@ -222,6 +223,15 @@ class DiscordSim:
         if dm:
             del payload["guild_id"], payload["guild"], payload["member"]
             payload |= {"user": person, "channel": {"id": str(channel), "type": 1, "recipients": [person]}}
+        if group_dm:  # a group DM, which bots cannot join: the bot is on the user's account instead
+            del payload["guild_id"], payload["guild"], payload["member"]
+            others = [person | {"id": "99", "username": "friend"}]
+            payload |= {
+                "user": person,
+                "channel": {"id": str(channel), "type": 3, "recipients": others, "name": None, "owner_id": "99"},
+                "context": 2,
+                "authorizing_integration_owners": {"1": str(user)},
+            }
         if kind == COMPONENT:
             payload["message"] = self._message({}) | ({"id": message_id} if message_id else {})
         self._started = time.perf_counter()
