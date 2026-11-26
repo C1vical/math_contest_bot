@@ -24,9 +24,35 @@ def resolves(registry):
         ("Euclid 2023 q6", ProblemRef("Euclid", 2023, 6)),
         ("Euclid", ProblemRef("Euclid", None, None)),
         ("  pascal   2019  ", ProblemRef("pascal", 2019, None)),
+        # Contests split into parts: "B1" is problem 1 of part B.
+        ("CSMC 2024 B1", ProblemRef("CSMC", 2024, 1, "B")),
+        ("csmc-2024-b1", ProblemRef("csmc", 2024, 1, "B")),
+        ("CIMC 2020 #A6", ProblemRef("CIMC", 2020, 6, "A")),
+        ("CSMC 2024 Part B 2", ProblemRef("CSMC", 2024, 2, "B")),
+        ("CSMC 2024 part b #3", ProblemRef("CSMC", 2024, 3, "B")),
+        ("CSMC 2024 Part B Question 2", ProblemRef("CSMC", 2024, 2, "B")),
+        ("CSMC 2024 Part B", ProblemRef("CSMC", 2024, None, "B")),
+        ("csmc 2024 7", ProblemRef("csmc", 2024, 7)),  # the absolute number still works
+        ("AMC 10B 2019 5", ProblemRef("AMC 10B", 2019, 5)),  # "10B" is a name, not part B
+        ("Pascal 2019 P25", ProblemRef("Pascal", 2019, 25)),  # P is "problem", never a part
     ],
 )
 def test_problem_references(registry, text, expected):
+    assert parse_problem_reference(text, resolves(registry)) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("Test B1 2020", ProblemRef("Test B1", 2020, None)),
+        ("Test B1 2020 #3", ProblemRef("Test B1", 2020, 3)),
+        ("Test B1 2020 A2", ProblemRef("Test B1", 2020, 2, "A")),
+    ],
+)
+def test_a_part_like_token_that_is_part_of_a_contest_name_stays_in_it(text, expected):
+    from mathbot.contests import AOPS_WIKI, ContestRegistry, ContestSeries
+
+    registry = ContestRegistry([ContestSeries("TESTB1", "Test B1", "T", AOPS_WIKI, "Test B1")])
     assert parse_problem_reference(text, resolves(registry)) == expected
 
 

@@ -20,6 +20,8 @@ HELP: dict[str, tuple[str, str]] = {
         "`/problem contest:AMC10A year:2024 number:5`\n"
         "or everything in one box: `/problem contest:AMC 10A 2024 #5` "
         "(also `2024 AIME I P5`, `amc10a-2024-p05`).\n"
+        "Contests split into parts take the part and its number: `/problem contest:CSMC 2024 B1` "
+        "(also `CSMC 2024 Part B 1`).\n"
         "Contest names ignore case, spaces and punctuation and accept aliases (`aime i`, `Fall 10A`). "
         "Start typing to pick from the list: it shows 25 entries at most, so older contests (AHSME, AJHSME, "
         "the 2021 Fall AMCs) may only appear once you type.",

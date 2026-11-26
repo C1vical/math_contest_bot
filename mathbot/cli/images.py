@@ -123,7 +123,11 @@ def cmd_render(args: argparse.Namespace, settings: Settings) -> int:
     registry = common.registry(settings)
     repo = common.repo(settings, registry)
     pipeline = common.render_pipeline(settings, repo)
-    problems = pipeline.plan(common.series_keys(registry, args.contests), limit=args.limit)
+    series_keys = common.series_keys(registry, args.contests)
+    if args.force:
+        problems = repo.iter_problems(series_keys)[: args.limit] if args.limit else repo.iter_problems(series_keys)
+    else:
+        problems = pipeline.plan(series_keys, limit=args.limit)
     print(f"{len(problems)} problem(s) need rendering (renderer {pipeline.version})")
     if args.dry_run or not problems:
         return 0

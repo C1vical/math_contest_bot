@@ -18,6 +18,8 @@ RANDOM_PREFIX = "mathbot:rand:"
 
 _SEPARATORS = re.compile(r"[\s,_/-]+")
 _EXPLICIT_NUMBER = re.compile(r"^(?:#|p|q|no\.?)(\d{1,3})$", re.IGNORECASE)
+# "B1" / "#B1": problem 1 of part B (CSMC, CIMC, COMC). P and Q are taken by "P5" / "Q5".
+_PART_NUMBER = re.compile(r"^#?([A-E])(\d{1,2})$", re.IGNORECASE)
 _NUMBER_WORDS = {"problem", "prob", "question", "q", "p", "no", "number", "#"}
 
 
@@ -25,7 +27,8 @@ _NUMBER_WORDS = {"problem", "prob", "question", "q", "p", "no", "number", "#"}
 class ProblemRef:
     contest: str
     year: int | None
-    number: int | None
+    number: int | None  # with ``part``, the position within that part (B1 -> part "B", number 1)
+    part: str | None = None
 
 
 def _number(text: str) -> int | None:
@@ -40,23 +43,39 @@ def parse_problem_reference(text: str, resolves: Callable[[str], bool]) -> Probl
     number. A bare trailing number is the problem number only when the name without it
     is a contest and the name with it is not, so ``AMC 8 2019 5`` is AMC 8 problem 5 and
     ``AIME 1 2019`` stays AIME I. ``resolves(name)`` says whether a name is a contest.
+
+    ``B1``, ``#B1`` or ``Part B 1`` name problem 1 of part B (``part="B"``, ``number=1``).
     """
     # Digits are tested with isdecimal(): isdigit() also accepts "²", which int() refuses.
     year: int | None = None
     number: int | None = None
+    part: str | None = None
+    # A "B1" token: decided after the loop, because it may belong to a contest's name instead.
+    part_token: str | None = None
+    part_token_at = 0  # where in ``name`` it would go
     name: list[str] = []
     tokens = [t for t in _SEPARATORS.split(text.strip()) if t]
-    expect_number = False
+    expect_number = expect_part = False
     for token in tokens:
         if expect_number and token.isdecimal():
             number, expect_number = _number(token), False
             if number is None:
                 name.append(token)
             continue
-        expect_number = False
+        if expect_part and len(token) == 1 and token.isalpha():
+            part, expect_part = token.upper(), False
+            continue
+        expect_number = expect_part = False
         explicit = _EXPLICIT_NUMBER.match(token)
+        lettered = _PART_NUMBER.match(token)
         if explicit and number is None and _number(explicit.group(1)) is not None:
             number = _number(explicit.group(1))
+        elif lettered and part is None and _number(lettered.group(2)) is not None:
+            if part_token is not None:  # of two such tokens, only the later can be the problem
+                name.insert(part_token_at, part_token)
+            part_token, part_token_at = token, len(name)
+        elif token.lower() == "part" and part is None:
+            expect_part = True
         elif token.isdecimal() and len(token) == 4 and year is None and MIN_YEAR <= int(token) <= MAX_YEAR:
             year = int(token)
         elif token.lower() in _NUMBER_WORDS and number is None:
@@ -64,11 +83,19 @@ def parse_problem_reference(text: str, resolves: Callable[[str], bool]) -> Probl
         else:
             name.append(token)
 
+    if part_token is not None:
+        named = [*name[:part_token_at], part_token, *name[part_token_at:]]
+        belongs_to_name = not resolves(" ".join(name)) and resolves(" ".join(named))
+        if number is None and part is None and not belongs_to_name:
+            lettered = _PART_NUMBER.match(part_token)
+            part, number = lettered.group(1).upper(), _number(lettered.group(2))  # type: ignore[union-attr]
+        else:
+            name = named
     if number is None and len(name) > 1 and name[-1].isdecimal() and _number(name[-1]) is not None:
         shorter = " ".join(name[:-1])
         if not resolves(" ".join(name)) and resolves(shorter):
             number = _number(name.pop())
-    return ProblemRef(" ".join(name), year, number)
+    return ProblemRef(" ".join(name), year, number, part)
 
 
 # --------------------------------------------------------------------------- random filters

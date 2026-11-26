@@ -13,7 +13,8 @@ from mathbot.bot.cogs.problems import Problems
 from mathbot.bot.query import RandomFilters
 from mathbot.bot.services import Database
 from mathbot.config import load_settings
-from tests.conftest import add_problem
+from mathbot.models import EditionRef, ParsedProblem
+from tests.conftest import add_problem, store
 
 
 class FakeResponse:
@@ -101,6 +102,42 @@ def test_problem_accepts_everything_in_the_contest_option(repo, bot, text):
     run(Problems.problem.callback(Problems(client), interaction, text))
     [message] = interaction.followup.messages
     assert message["embed"].title == "2024 AMC 10A Problem 2"
+
+
+def csmc(repo, year=2024):
+    """A CSMC paper as CEMC stores it: Part A is problems 1-6, Part B is 7-9."""
+    ref = EditionRef("CSMC", year, f"{year} CSMC", "https://example.org/csmc", None, None)
+    for n in range(1, 10):
+        section = "A" if n <= 6 else "B"
+        html = f"<p>CSMC {year} question {n}: what is {n} times {n}?</p>"
+        store(repo, ref, ParsedProblem(n, html, f"https://example.org/csmc#{n}", raw_payload=html, section=section))
+
+
+@pytest.mark.parametrize("text", ["CSMC 2024 B1", "csmc 2024 b1", "CSMC 2024 Part B 1", "csmc-2024-#b1", "csmc 2024 7"])
+def test_problem_takes_a_part_and_its_number(repo, bot, text):
+    csmc(repo)
+    interaction = FakeInteraction(bot())
+    run(Problems.problem.callback(Problems(interaction.client), interaction, text))
+    [message] = interaction.followup.messages
+    assert message["embed"].title == "2024 CSMC Problem B1"  # problem 7 is shown by its part label
+    assert "question 7:" in message["embed"].description
+
+
+def test_a_part_that_is_too_short_lists_the_problems_there_are(repo, bot):
+    csmc(repo)
+    interaction = FakeInteraction(bot())
+    run(Problems.problem.callback(Problems(interaction.client), interaction, "CSMC 2024 B4"))
+    [message] = interaction.response.messages
+    assert message["ephemeral"] and message["embed"].title == "Problem not available"
+    assert "no problem B4" in message["embed"].description and "A1-A6, B1-B3" in message["embed"].description
+
+
+def test_a_part_of_a_contest_without_parts_is_explained(repo, bot):
+    amc(repo)
+    interaction = FakeInteraction(bot())
+    run(Problems.problem.callback(Problems(interaction.client), interaction, "AMC 10A 2024 B1"))
+    [message] = interaction.response.messages
+    assert message["ephemeral"] and message["embed"].title == "No parts in this contest"
 
 
 def test_problem_without_a_number_explains_the_format(repo, bot):

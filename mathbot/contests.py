@@ -58,6 +58,9 @@ class ContestSeries:
     aliases: tuple[str, ...] = ()
     enabled: bool = True
     legacy_name: str | None = None  # name in the pre-2.0 database and the CEMC seed manifest
+    # Problems are known by part and position ("B1"), not by absolute number (7); the
+    # stored ``section`` holds the part letter. IDs keep the absolute number.
+    part_labels: bool = False
     source: Mapping[str, object] = field(default_factory=lambda: MappingProxyType({}))
     notes: str = ""
 
@@ -211,11 +214,11 @@ _SERIES: tuple[ContestSeries, ...] = (
     _cemc("CAYLEY", "Cayley", "PCF", 14, 25),
     _cemc("FERMAT", "Fermat", "PCF", 14, 25),
     _cemc("CIMC", "CIMC", "CSIMC", 23, 9, source_name="Canadian Intermediate Mathematics Contest",
-          legacy_name="CIMC", aliases=("Canadian Intermediate",),
+          legacy_name="CIMC", aliases=("Canadian Intermediate",), part_labels=True,
           notes="Canadian Intermediate Mathematics Contest (November). Part A: 6 short-answer, "
                 "Part B: 3 full-solution questions."),
     _cemc("CSMC", "CSMC", "CSIMC", 23, 9, source_name="Canadian Senior Mathematics Contest",
-          legacy_name="CSMC", aliases=("Canadian Senior",),
+          legacy_name="CSMC", aliases=("Canadian Senior",), part_labels=True,
           notes="Canadian Senior Mathematics Contest (November). Part A: 6 short-answer, "
                 "Part B: 3 full-solution questions."),
     _cemc("GAUSS7", "Gauss (Grade 7)", "GAUSS", 13, 25, enabled=False, aliases=("Gauss 7",),
@@ -224,6 +227,10 @@ _SERIES: tuple[ContestSeries, ...] = (
           notes="Out of scope by default; enable with ENABLE_CONTESTS=GAUSS8."),
 )
 # fmt: on
+
+# Series whose problems are labelled by part ("B1"). Read by ProblemRow.title, which has no
+# registry at hand; the flag is a fixed property of a contest, so enable/disable can't change it.
+PART_LABEL_SERIES = frozenset(s.key for s in _SERIES if s.part_labels)
 
 FAMILY_NAMES = {
     "AMC": "AMC (8 / 10 / 12, AJHSME, AHSME)",

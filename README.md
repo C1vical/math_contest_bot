@@ -49,7 +49,7 @@ python -m mathbot bot        # or: python main.py
 
 | Command | What it does |
 |---|---|
-| `/problem` | Show one problem. Accepts shorthand such as `AMC 10A 2019 #25` or `amc10a-2019-p25`. |
+| `/problem` | Show one problem. Accepts shorthand such as `AMC 10A 2019 #25` or `amc10a-2019-p25`. Contests split into parts (CSMC, CIMC, COMC, CLMC) also take the part: `CSMC 2024 B1`. |
 | `/random` | Show a random problem, filtered by contest, year, number, difficulty or source |
 | `/contests`, `/contest` | List all contests, or show one in detail |
 | `/stats` | Problem totals |

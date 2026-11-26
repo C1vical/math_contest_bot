@@ -89,6 +89,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("contests", nargs="*")
     p.add_argument("--limit", type=int)
     p.add_argument("--dry-run", action="store_true", help="only report how many problems need rendering")
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="render the selected problems again even if they have an image (e.g. after a title change)",
+    )
     p.set_defaults(func=images.cmd_render)
 
     p = sub.add_parser("prefetch-assets", help="download statement images before rendering (resumable)")

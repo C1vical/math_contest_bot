@@ -39,7 +39,8 @@ Number = app_commands.Range[int, 1, MAX_NUMBER]
 
 PROBLEM_FORMAT_HELP = (
     "Give the contest, year and number, e.g. `/problem contest:AMC10A year:2019 number:25`, "
-    "or all in one: `/problem contest:AMC 10A 2019 #25`."
+    "or all in one: `/problem contest:AMC 10A 2019 #25`. "
+    "Contests with parts also take the part: `/problem contest:CSMC 2024 B1`."
 )
 
 
@@ -106,6 +107,17 @@ class Problems(commands.Cog):
             f"{year} **{series.name}** has no problem {number}.\nAvailable problems: {compress_years(numbers)}",
         )
 
+    async def _explain_missing_part(self, series: ContestSeries, year: int, part: str, number: int) -> discord.Embed:
+        """Say why ``B4`` does not exist: no such year, no such part, or the part is shorter."""
+        parts = await self.bot.db.call(lambda repo: repo.parts_for(series.key, year))
+        if not parts:
+            return await self._explain_missing(series, year, number)
+        available = ", ".join(f"{p}1-{p}{count}" if count > 1 else f"{p}1" for p, count in parts.items())
+        return ui.error_embed(
+            "Problem not available",
+            f"{year} **{series.name}** has no problem {part}{number}.\nAvailable problems: {available}",
+        )
+
     async def _pick_random(self, interaction: discord.Interaction, filters: RandomFilters) -> ProblemRow | None:
         """A problem matching ``filters``, avoiding the ones shown recently in this channel.
 
@@ -151,7 +163,9 @@ class Problems(commands.Cog):
         if series is None or ref.year is None:
             return ui.contest_choices(self.bot.registry, current)
         label, value = f"{ref.year} {series.name}", f"{series.key} {ref.year}"
-        if ref.number is not None:
+        if ref.number is not None and ref.part is not None and series.part_labels:
+            label, value = f"{label} Problem {ref.part}{ref.number}", f"{value} {ref.part}{ref.number}"
+        elif ref.number is not None and ref.part is None:
             label, value = f"{label} Problem {ref.number}", f"{value} #{ref.number}"
         return [app_commands.Choice(name=label, value=value)]
 
@@ -188,14 +202,26 @@ class Problems(commands.Cog):
     ) -> None:
         series = self.bot.registry.resolve(contest)
         name = contest
+        part: str | None = None
         if series is None or year is None or number is None:
             ref = parse_problem_reference(contest, lambda text: self.bot.registry.resolve(text) is not None)
             name = ref.contest or contest
             series = self.bot.registry.resolve(name)
             year = year if year is not None else ref.year
             number = number if number is not None else ref.number
+            part = ref.part
         if series is None:
             await self._unknown_contest(interaction, name)
+            return
+        if part is not None and not series.part_labels:
+            await self._reply_error(
+                interaction,
+                ui.error_embed(
+                    "No parts in this contest",
+                    f"**{series.name}** problems are numbered 1, 2, 3, ... without parts, "
+                    f"so `{part}{number or ''}` does not name one. {PROBLEM_FORMAT_HELP}",
+                ),
+            )
             return
         if year is None or number is None:
             years = await self.bot.db.call(lambda repo: repo.years_for(series.key))
@@ -215,10 +241,16 @@ class Problems(commands.Cog):
             return
         # The lookup is a local, indexed query, so it runs before deferring: that keeps
         # "not found" replies ephemeral (a follow-up to a public defer cannot be).
-        problem = await self.bot.db.call(lambda repo: repo.get_problem(series.key, year, number))
-        if problem is None:
-            await self._reply_error(interaction, await self._explain_missing(series, year, number))
-            return
+        if part is not None:
+            problem = await self.bot.db.call(lambda repo: repo.get_problem_by_part(series.key, year, part, number))
+            if problem is None:
+                await self._reply_error(interaction, await self._explain_missing_part(series, year, part, number))
+                return
+        else:
+            problem = await self.bot.db.call(lambda repo: repo.get_problem(series.key, year, number))
+            if problem is None:
+                await self._reply_error(interaction, await self._explain_missing(series, year, number))
+                return
         await interaction.response.defer(thinking=True)  # image delivery may be slow
         await self._send(interaction, problem)
 

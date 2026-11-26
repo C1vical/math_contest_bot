@@ -12,7 +12,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 
-from mathbot.contests import ContestRegistry, edition_id, problem_id
+from mathbot.contests import PART_LABEL_SERIES, ContestRegistry, edition_id, problem_id
 from mathbot.db.connection import iso_utc
 from mathbot.htmlnorm import NormalizedContent, sha256_text
 from mathbot.models import EditionRef, KnownEdition, ParsedProblem
@@ -38,10 +38,19 @@ class ProblemRow:
     answer: str | None
     source_url: str
     solution_url: str | None = None
+    part_number: int | None = None  # position within its part (section), e.g. 1 for B1
+
+    @property
+    def display_number(self) -> str:
+        """``B1`` for a contest numbered by part (CSMC, COMC...), else the number (``7``)."""
+        section = self.section or ""
+        if self.series_key in PART_LABEL_SERIES and len(section) == 1 and section.isalpha() and self.part_number:
+            return f"{section}{self.part_number}"
+        return str(self.number)
 
     @property
     def title(self) -> str:
-        return f"{self.year} {self.series_name} Problem {self.number}"
+        return f"{self.year} {self.series_name} Problem {self.display_number}"
 
 
 @dataclass(frozen=True)
@@ -61,7 +70,9 @@ _PROBLEM_SELECT = """
            e.year, p.number, p.section, e.label, p.statement_html, p.statement_text,
            p.content_hash, p.version, p.answer, p.source_url,
            (SELECT sol.source_url FROM solutions sol WHERE sol.problem_id = p.id
-            ORDER BY sol.id LIMIT 1) AS solution_url
+            ORDER BY sol.id LIMIT 1) AS solution_url,
+           (SELECT COUNT(*) FROM problems q WHERE q.edition_id = p.edition_id AND q.section = p.section
+            AND q.number <= p.number) AS part_number
     FROM problems p
     JOIN contest_editions e ON e.id = p.edition_id
     JOIN contest_series s ON s.id = e.series_id
@@ -368,6 +379,28 @@ class Repository:
 
     def get_problem(self, series_key: str, year: int, number: int) -> ProblemRow | None:
         return self.get_problem_by_id(problem_id(series_key, year, number))
+
+    def get_problem_by_part(self, series_key: str, year: int, part: str, position: int) -> ProblemRow | None:
+        """Problem ``B1`` of an edition: the ``position``-th problem whose section is ``part``."""
+        if position < 1:
+            return None
+        row = self.conn.execute(
+            "SELECT id FROM problems WHERE edition_id = ? AND section = ? ORDER BY number LIMIT 1 OFFSET ?",
+            (edition_id(series_key, year), part.upper(), position - 1),
+        ).fetchone()
+        return self.get_problem_by_id(row["id"]) if row else None
+
+    def parts_for(self, series_key: str, year: int) -> dict[str, int]:
+        """``{"A": 6, "B": 3}``: how many problems each part of an edition has, in paper order."""
+        rows = self.conn.execute(
+            """
+            SELECT section, COUNT(*) AS problems FROM problems
+            WHERE edition_id = ? AND section IS NOT NULL
+            GROUP BY section ORDER BY MIN(number)
+            """,
+            (edition_id(series_key, year),),
+        )
+        return {r["section"]: r["problems"] for r in rows}
 
     def get_problem_by_id(self, pid: str) -> ProblemRow | None:
         return self._problem(self.conn.execute(_PROBLEM_SELECT + " WHERE p.id = ?", (pid,)).fetchone())
