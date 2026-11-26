@@ -9,6 +9,7 @@ collect, render and publish those problems.
 | [AoPS Wiki](https://artofproblemsolving.com/wiki/) | AMC 8/10/12, AJHSME, AHSME, AIME, USAJMO, USAMO, IMO | 7,310 | No, AoPS blocks automated access |
 | [AoPS Community](https://artofproblemsolving.com/community/c3277) | CMO (CJMO and CMOQR optional) | 323 | No, AoPS blocks automated access |
 | [Canadian Mathematical Society](https://cms.math.ca/competitions/) | COMC (1998-2026), CLMC (2023-2026) | 408 (CLMC with answers) | Yes |
+| [HMMT](https://www.hmmt.org/www/archive/problems) | HMMT February and November rounds (individual, team, guts), HMIC | 3,439 from 232 papers (806 with answers) | Yes |
 
 Counts are from 2026-11-22, when all 8,880 problems had an image; the CMS row is from
 2026-11-26. The AoPS problems
@@ -182,8 +183,8 @@ secrets listed in that file. Publish the first snapshot yourself.
 
 ### Problems from PDF papers
 
-The CMS publishes its papers only as PDFs. A problem from one is shown as a picture of its own
-region of the official PDF, so formulas and diagrams look exactly as printed; the PDF's text
+The CMS and HMMT publish their papers only as PDFs. A problem from one is shown as a picture
+of its own region of the official PDF, so formulas and diagrams look exactly as printed; the PDF's text
 layer is kept only as plain text for search and the text fallback. Ingestion finds each
 problem's place on the page (see [mathbot/pdf.py](mathbot/pdf.py)) and stores coordinates;
 `render` cuts the picture from the PDF. A paper whose questions can't be located with
@@ -191,14 +192,19 @@ certainty is reported and skipped, never stored with doubtful numbering: current
 1996 (its text layer is offset from the printed text) and COMC 1997 (its text layer is
 damaged). For COMC 2012-2016 and the CLMC, whose question booklets can't be read that way,
 the questions are taken from the official solutions, cut off where each solution begins.
-Rendering needs `pypdfium2` (in `requirements.lock`); the bot itself does not.
+An HMMT paper is stored only when its problems PDF and its solutions PDF, read
+independently, agree on the number of problems; its answer key keeps only answers printed as
+a plain integer. Each HMMT round is its own contest (`HMMTFALGNT`, `HMMTNGUTS`, `HMIC`,
+...); `/random contest:HMMT` draws from all of them. Integration Bee, Oral and Power rounds
+and 2011's paired subject tests are not stored. Rendering needs `pypdfium2` (in
+`requirements.lock`); the bot itself does not.
 
 ## Source access and attribution
 
 Problems remain the property of their publishers: the Mathematical Association of
 America (AMC, AIME, USAMO, USAJMO), the IMO, the Canadian Mathematical Society (CMO,
-COMC, CLMC) and the CEMC at the University of Waterloo, with transcriptions by the Art of Problem
-Solving community. Every problem links to its source. Use this for study groups, not
+COMC, CLMC), HMMT and the CEMC at the University of Waterloo, with transcriptions by the
+Art of Problem Solving community. Every problem links to its source. Use this for study groups, not
 for republishing.
 
 All requests go through one client that identifies itself honestly, obeys robots.txt
@@ -226,7 +232,7 @@ Never edit a database migration that has been applied; add a new one in
 ```
 mathbot/
   contests.py    contest registry and IDs (amc10a-2024-p05)
-  sources/       CEMC, CMS, AoPS Wiki and AoPS Community adapters
+  sources/       CEMC, CMS, HMMT, AoPS Wiki and AoPS Community adapters
   pdf.py         problems located in, and cut out of, PDF papers
   ingest.py      fetch, normalize and store problems
   http.py        rate-limited HTTP client

@@ -40,6 +40,7 @@ CROP_PADDING = 6.0  # points kept around the text column and above / below a pro
 STOP_GAP = 6.0  # points left out above a stop line
 FIGURE_GAP = 36.0  # a drawing that starts within this many points below a problem's ink belongs to it
 INK = 160  # a pixel darker than this (0-255) is ink, not paper or light shading
+EDGE_QUARTER = 0.25  # page heads and feet are looked for within this share of the page from each edge
 EDGE_BAND = 0.12  # drawn page furniture (logos, rules) lies within this share of the page's height
 FURNITURE_GAP = 6  # blank points that separate a page's head or foot (with its rule or logo) from the text
 COLUMN_GAP = 1.5  # a horizontal gap this many times the type size splits a line into two columns
@@ -132,6 +133,9 @@ class Layout:
     # Every problem must end at a stop line (a solutions PDF: each statement is followed by its
     # solution). One that runs into the next label means a stop line was not recognised.
     require_stop: bool = False
+    # Lines repeated at the same height near the top or bottom of several pages (a guts round's
+    # "Team ID#" box) are page furniture even outside the header and footer bands.
+    repeated_heads: bool = False
     skip_label_line: bool = False
     continuous: bool = False  # numbers run on across parts (1-6 in A, 7-9 in B)
     max_indent: float = 24.0  # a label must start this close to the left edge of the text
@@ -319,6 +323,22 @@ def _furniture_lines(document: Document, layout: Layout) -> set[int]:
         recurring = len(pages_by_shape[shape(line.text)]) > 1 or len(document.sizes) == 1
         if recurring or (_PAGE_NUMBER.match(line.text) and not _beside_text(document, line)):
             out.add(id(line))
+    # Running heads set further in (a contest's name and a "Team ID#" box above each page of a
+    # guts round): the same line at the same height near the top or bottom of several pages.
+    if layout.repeated_heads and len(document.sizes) > 1:
+        places: dict[tuple[str, int], set[int]] = {}
+        for line in document.lines:
+            places.setdefault((shape(line.text), round(line.top / 3)), set()).add(line.page)
+        for line in document.lines:
+            height = document.sizes[line.page][1]
+            if not (line.bottom <= height * 0.25 or line.top >= height * 0.8) or layout.start.match(line.text):
+                continue
+            if any(p.search(line.text) for p in layout.stop) or (layout.heading and layout.heading.match(line.text)):
+                continue  # "Your solution:" recurs too, and must still end its question
+            key = shape(line.text)
+            pages = set().union(*(places.get((key, round(line.top / 3) + d), set()) for d in (-1, 0, 1)))
+            if len(pages) > 1:
+                out.add(id(line))
     return out
 
 
@@ -502,6 +522,23 @@ def _pieces(
         x0, x1 = columns[page]
         pad = layout.pad_top if page == start[0] else 0.0
         inside = (x0 + layout.pad_x, x1 - layout.pad_x)  # the text column, without frames around it
+        # Furniture below the problem's text on the same page (a guts round's cut line and the next
+        # round's header in mid-page) ends it, whatever ink follows.
+        last_text = max(
+            (line.bottom for line in on_page if top - 1 <= line.top and line.bottom <= bottom + 1), default=top
+        )
+        below = [
+            line.top
+            for line in document.lines
+            if line.page == page
+            and id(line) in furniture
+            and last_text <= line.top < bottom
+            and line.x0 < inside[1]
+            and line.x1 > inside[0]
+            # Wide lines only: a lone number there may be a figure's label, not a page number.
+            and line.x1 - line.x0 >= 0.3 * (inside[1] - inside[0])
+        ]
+        bottom = min([bottom, *(edge - 1 for edge in below)])
         bottom = _ink_bottom(document, on_page, page, inside, top, bottom)
         pieces.append(Piece(page, x0, max(0.0, top - pad), x1, min(height, bottom)))
     return pieces
@@ -541,7 +578,9 @@ def _ink_bottom(
 def _content_top(document: Document, furniture: set[int], page: int) -> float:
     height = document.sizes[page][1]
     heads = [
-        line.bottom for line in document.lines if line.page == page and line.top < height / 2 and id(line) in furniture
+        line.bottom
+        for line in document.lines
+        if line.page == page and line.bottom <= height * EDGE_QUARTER and id(line) in furniture
     ]
     edge = max(heads, default=0.0) + 1
     if heads:
@@ -612,7 +651,9 @@ def _block_edge(document: Document, page: int, edge: float, step: int) -> float:
 def _content_bottom(document: Document, furniture: set[int], page: int) -> float:
     height = document.sizes[page][1]
     feet = [
-        line.top for line in document.lines if line.page == page and line.top >= height / 2 and id(line) in furniture
+        line.top
+        for line in document.lines
+        if line.page == page and line.top >= height * (1 - EDGE_QUARTER) and id(line) in furniture
     ]
     edge = min(feet, default=height) - 1
     if feet:

@@ -26,7 +26,8 @@ AOPS_WIKI = "aops_wiki"
 AOPS_COMMUNITY = "aops_community"
 CEMC = "cemc"
 CMS = "cms"
-PROVIDERS = (AOPS_WIKI, AOPS_COMMUNITY, CEMC, CMS)
+HMMT = "hmmt"
+PROVIDERS = (AOPS_WIKI, AOPS_COMMUNITY, CEMC, CMS, HMMT)
 AOPS_PROVIDERS = frozenset({AOPS_WIKI, AOPS_COMMUNITY})
 
 PROVIDER_NAMES = {
@@ -34,6 +35,7 @@ PROVIDER_NAMES = {
     AOPS_COMMUNITY: "AoPS Community",
     CEMC: "CEMC (University of Waterloo)",
     CMS: "Canadian Mathematical Society",
+    HMMT: "HMMT (Harvard-MIT Mathematics Tournament)",
 }
 
 
@@ -141,6 +143,19 @@ def _cemc(key: str, name: str, family: str, category: int, problems: int, **kw) 
     )
 
 
+def _hmmt(key: str, name: str, eras: Iterable[Era], aliases: Iterable[str] = (), **kw) -> ContestSeries:
+    return ContestSeries(
+        key=key,
+        name=name,
+        family="HMMT",
+        provider=HMMT,
+        source_name=name,
+        eras=tuple(eras),
+        aliases=tuple(aliases),
+        **kw,
+    )
+
+
 def _community(key: str, name: str, category: int, eras: Iterable[Era], **kw) -> ContestSeries:
     return ContestSeries(
         key=key,
@@ -237,6 +252,39 @@ _SERIES: tuple[ContestSeries, ...] = (
         notes="Canada Lynx Mathematics Competition (October). 15 multiple-choice questions in Parts A-C, "
               "numbered 1-15; statements and answers from the official solutions.",
     ),
+    # ---- HMMT (problems cut out of the official PDFs; counts checked against the solutions) ----
+    _hmmt("HMMTFALGNT", "HMMT February Algebra and Number Theory", [Era(2017, None, 10)],
+          ["HMMT Feb Algebra and Number Theory", "HMMT Feb AlgNT", "HMMT February AlgNT"]),
+    _hmmt("HMMTFALG", "HMMT February Algebra", [Era(1998, 2010, 10), Era(2012, 2016, 10)],
+          ["HMMT Feb Algebra"]),
+    _hmmt("HMMTFCOMB", "HMMT February Combinatorics", [Era(2003, 2010, 10), Era(2012, None, 10)],
+          ["HMMT Feb Combinatorics", "HMMT Feb Combo", "HMMT February Combo"]),
+    _hmmt("HMMTFGEO", "HMMT February Geometry", [Era(1998, 2010, 10), Era(2012, None, 10)],
+          ["HMMT Feb Geometry", "HMMT Feb Geo", "HMMT February Geo"]),
+    _hmmt("HMMTFCALC", "HMMT February Calculus", [Era(1998, 2010, 10)], ["HMMT Feb Calculus"]),
+    _hmmt("HMMTFADV", "HMMT February Advanced Topics", [Era(1998, 2002, 10)], ["HMMT Feb Advanced Topics"]),
+    _hmmt("HMMTFGEN1", "HMMT February General Part 1", [Era(2001, 2010, 10)], ["HMMT Feb General 1"]),
+    _hmmt("HMMTFGEN2", "HMMT February General Part 2", [Era(2001, 2010, 10)], ["HMMT Feb General 2"]),
+    # Team and guts papers changed length often; eras list the counts of the papers read (years
+    # whose papers can't be read are left out rather than guessed).
+    _hmmt("HMMTFTEAM", "HMMT February Team",
+          [Era(2002, 2002, 12), Era(2003, 2003, 10), Era(2013, None, 10)], ["HMMT Feb Team"]),
+    _hmmt("HMMTFTEAMA", "HMMT February Team A",
+          [Era(2005, 2006, 15), Era(2007, 2008, 14), Era(2009, 2009, 8), Era(2010, 2010, 10),
+           Era(2011, 2011, 15), Era(2012, 2012, 10)], ["HMMT Feb Team A"]),
+    _hmmt("HMMTFTEAMB", "HMMT February Team B",
+          [Era(2005, 2006, 15), Era(2007, 2007, 10), Era(2008, 2008, 15), Era(2009, 2009, 6),
+           Era(2010, 2010, 10), Era(2011, 2011, 15), Era(2012, 2012, 10)], ["HMMT Feb Team B"]),
+    _hmmt("HMMTFGUTS", "HMMT February Guts",
+          [Era(2001, 2001, 60), Era(2002, 2002, 63), Era(2003, 2006, 45), Era(2007, None, 36)], ["HMMT Feb Guts"]),
+    _hmmt("HMMTNGEN", "HMMT November General", [Era(2011, None, 10)], ["HMMT Nov General"]),
+    _hmmt("HMMTNGEN1", "HMMT November General Part 1", [Era(2008, 2010, 10)], ["HMMT Nov General 1"]),
+    _hmmt("HMMTNGEN2", "HMMT November General Part 2", [Era(2009, 2010, 10)], ["HMMT Nov General 2"]),
+    _hmmt("HMMTNTHEME", "HMMT November Theme", [Era(2011, None, 10)], ["HMMT Nov Theme"]),
+    _hmmt("HMMTNTEAM", "HMMT November Team", [Era(2009, 2009, 11), Era(2010, None, 10)], ["HMMT Nov Team"]),
+    _hmmt("HMMTNGUTS", "HMMT November Guts", [Era(2008, None, 36)], ["HMMT Nov Guts"]),
+    _hmmt("HMIC", "HMIC", [Era(2013, None, 5)], ["HMMT Invitational", "HMMT Invitational Competition"],
+          notes="HMMT Invitational Competition (April): five proof problems."),
     _cemc("GAUSS7", "Gauss (Grade 7)", "GAUSS", 13, 25, enabled=False, aliases=("Gauss 7",),
           notes="Out of scope by default; enable with ENABLE_CONTESTS=GAUSS7."),
     _cemc("GAUSS8", "Gauss (Grade 8)", "GAUSS", 13, 25, enabled=False, aliases=("Gauss 8",),
@@ -263,6 +311,7 @@ FAMILY_NAMES = {
     "CSIMC": "Canadian Senior / Intermediate (CSMC / CIMC)",
     "COMC": "Canadian Open Mathematics Challenge",
     "CLMC": "Canada Lynx Mathematics Competition",
+    "HMMT": "HMMT (February, November and HMIC rounds)",
     "GAUSS": "Gauss",
 }
 

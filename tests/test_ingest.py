@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from mathbot.contests import AOPS_COMMUNITY, AOPS_WIKI, CEMC, CMS
+from mathbot.contests import AOPS_COMMUNITY, AOPS_WIKI, CEMC, CMS, HMMT
 from mathbot.http import HttpStatusError, SourceBlockedError
 from mathbot.ingest import Ingestor
 from mathbot.models import EditionRef, EditionResult, ParsedProblem, ProblemFailure
@@ -260,7 +260,7 @@ def test_build_adapters_constructs_every_provider():
     from mathbot.sources import build_adapters
 
     adapters = build_adapters(FixtureClient(lambda url, params: None), refresh=True)
-    assert set(adapters) == {CEMC, CMS, AOPS_WIKI, AOPS_COMMUNITY}
+    assert set(adapters) == {CEMC, CMS, HMMT, AOPS_WIKI, AOPS_COMMUNITY}
     assert all(adapter.provider == provider for provider, adapter in adapters.items())
 
 

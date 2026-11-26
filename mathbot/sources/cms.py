@@ -83,7 +83,8 @@ LISTING_URLS = (
 # 19: lone page numbers further from the edge are furniture too
 # 20: section banners and the sponsor page end a question; page footers taken whole
 # 21, 22: drawn page heads and feet (logos, rules) are left out
-PARSER_VERSION = 22
+# 23: fallback papers are fetched only when needed (fingerprint covers the papers read)
+PARSER_VERSION = 23
 
 _FILE = re.compile(r"(?i)\b(comc|clmc)[-_]?(\d{4})")
 _TRANSLATION = re.compile(r"(?i)(-fr\b|-zh\b|docm|problemes)")

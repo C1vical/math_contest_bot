@@ -25,6 +25,13 @@ as parser test input.
 https://cms.math.ca/competitions/ served it on 2026-11-26 (unmodified, 112 KB). The content
 is (c) Canadian Mathematical Society and is included solely as parser test input.
 
+## `hmmt/` - captured from the live site
+
+The 2026 February Algebra and Number Theory problems and solutions PDFs, unmodified, from
+hmmt-archive.s3.amazonaws.com, and the archive and edition pages of https://www.hmmt.org on
+2026-11-26, reduced to their `#content` block (the archive grid to its first three years).
+The content is (c) HMMT and is included solely as parser test input.
+
 ## `aops_wiki/` and `aops_community/` - hand-written, NOT captured
 
 AoPS answered automated requests with an anti-bot challenge when this was
