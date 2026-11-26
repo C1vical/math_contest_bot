@@ -207,7 +207,9 @@ def extract_text(node: BeautifulSoup | Tag | str) -> str:
     for img in soup.find_all("img"):
         alt = (img.get("alt") or "").strip()
         classes = set(img.get("class") or [])
-        if alt and (classes & _LATEX_IMG_CLASSES or alt.startswith(("$", "\\[", "[asy]"))):
+        if "pdf-crop" in classes:  # a problem cut out of a PDF: its alt is the problem's text
+            img.replace_with(f"\n{alt}\n" if alt else " ")
+        elif alt and (classes & _LATEX_IMG_CLASSES or alt.startswith(("$", "\\[", "[asy]"))):
             if alt.startswith("[asy]"):
                 img.replace_with(" [diagram] ")
             else:

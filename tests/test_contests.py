@@ -71,6 +71,8 @@ def test_default_scope_matches_the_supported_families(registry):
         "FGH",
         "PCF",
         "CSIMC",
+        "COMC",
+        "CLMC",
     }
     assert {s.key for s in registry.select("cemc")} == {
         "EUCLID",
@@ -83,6 +85,7 @@ def test_default_scope_matches_the_supported_families(registry):
         "CIMC",
         "CSMC",
     }
+    assert {s.key for s in registry.select("cms")} == {"COMC", "CLMC"}
 
 
 def test_select_expands_families_and_providers(registry):

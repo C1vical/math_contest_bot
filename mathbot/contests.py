@@ -25,13 +25,15 @@ from types import MappingProxyType
 AOPS_WIKI = "aops_wiki"
 AOPS_COMMUNITY = "aops_community"
 CEMC = "cemc"
-PROVIDERS = (AOPS_WIKI, AOPS_COMMUNITY, CEMC)
+CMS = "cms"
+PROVIDERS = (AOPS_WIKI, AOPS_COMMUNITY, CEMC, CMS)
 AOPS_PROVIDERS = frozenset({AOPS_WIKI, AOPS_COMMUNITY})
 
 PROVIDER_NAMES = {
     AOPS_WIKI: "AoPS Wiki",
     AOPS_COMMUNITY: "AoPS Community",
     CEMC: "CEMC (University of Waterloo)",
+    CMS: "Canadian Mathematical Society",
 }
 
 
@@ -221,6 +223,20 @@ _SERIES: tuple[ContestSeries, ...] = (
           legacy_name="CSMC", aliases=("Canadian Senior",), part_labels=True,
           notes="Canadian Senior Mathematics Contest (November). Part A: 6 short-answer, "
                 "Part B: 3 full-solution questions."),
+    # ---- Canadian Mathematical Society (problems cut out of the official PDFs) ----
+    ContestSeries(
+        key="COMC", name="COMC", family="COMC", provider=CMS, source_name="Canadian Open Mathematics Challenge",
+        eras=(Era(1996, 1996, 13), Era(1997, 2010, 12), Era(2011, None, 12)),
+        aliases=("Canadian Open", "Canadian Open Math Challenge"), part_labels=True,
+        notes="Canadian Open Mathematics Challenge (November). Part A, B and C questions (A1-A4, B1-B4, "
+              "C1-C4 since 2011; A1-A8, B1-B4 before, A1-A10, B1-B3 in 1996).",
+    ),
+    ContestSeries(
+        key="CLMC", name="CLMC", family="CLMC", provider=CMS, source_name="Canada Lynx Mathematics Competition",
+        eras=(Era(2023, None, 15),), aliases=("Canada Lynx", "Lynx", "Canadian Lynx"),
+        notes="Canada Lynx Mathematics Competition (October). 15 multiple-choice questions in Parts A-C, "
+              "numbered 1-15; statements and answers from the official solutions.",
+    ),
     _cemc("GAUSS7", "Gauss (Grade 7)", "GAUSS", 13, 25, enabled=False, aliases=("Gauss 7",),
           notes="Out of scope by default; enable with ENABLE_CONTESTS=GAUSS7."),
     _cemc("GAUSS8", "Gauss (Grade 8)", "GAUSS", 13, 25, enabled=False, aliases=("Gauss 8",),
@@ -245,6 +261,8 @@ FAMILY_NAMES = {
     "FGH": "Fryer / Galois / Hypatia",
     "PCF": "Pascal / Cayley / Fermat",
     "CSIMC": "Canadian Senior / Intermediate (CSMC / CIMC)",
+    "COMC": "Canadian Open Mathematics Challenge",
+    "CLMC": "Canada Lynx Mathematics Competition",
     "GAUSS": "Gauss",
 }
 

@@ -1,2 +1,4 @@
 # Figures are embedded byte for byte: a changed line ending would change the statement hash.
 mathbot/figures/* -text
+# Test papers are compared byte for byte (their digest is part of every crop URL).
+*.pdf binary

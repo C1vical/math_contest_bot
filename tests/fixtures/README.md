@@ -19,6 +19,12 @@ repository small:
 The contest content is (c) University of Waterloo / CEMC and is included solely
 as parser test input.
 
+## `cms/` - captured from the live site
+
+`comc2005-exam-en.pdf` is the 2005 COMC paper exactly as
+https://cms.math.ca/competitions/ served it on 2026-11-26 (unmodified, 112 KB). The content
+is (c) Canadian Mathematical Society and is included solely as parser test input.
+
 ## `aops_wiki/` and `aops_community/` - hand-written, NOT captured
 
 AoPS answered automated requests with an anti-bot challenge when this was

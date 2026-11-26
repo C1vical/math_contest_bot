@@ -217,12 +217,15 @@ def test_contests_still_held_are_offered_before_typing(drive, command, enable):
 
     offered = values(drive(scenario, contests=contests))
     held = {s.key for s in contests.all() if s.eras[-1].last_year is None}
-    if command != "random":
-        assert held <= set(offered)
-    elif not enable:  # groups come first in /random; every contest is in the list or in a listed group
-        assert held <= set(offered)
+    families = {s.family for s in contests.all()}
+    covered = {s.key for s in contests.all() if s.family in offered} | set(offered)
+    if command == "random" or len(held) <= ui.MAX_CHOICES:
+        # /random lists a group once for all its members, so every contest is in it or in a group.
+        assert held <= covered
     else:
-        assert {s.key for s in contests.all() if s.family in offered} | set(offered) >= held
+        # More contests are held than Discord lists: the list holds only those (and, in /random,
+        # their groups), never a retired contest. Typing finds the rest (test below).
+        assert set(offered) <= held | families and len(offered) == ui.MAX_CHOICES
 
 
 @pytest.mark.parametrize("command", ["problem", "contest", "random"])

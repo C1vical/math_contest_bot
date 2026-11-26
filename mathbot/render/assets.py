@@ -36,6 +36,7 @@ from mathbot.http import (
     TransportError,
     atomic_write_bytes,
 )
+from mathbot.pdf import Crop, PdfLayoutError, parse_crop_url, pdf_digest, render_crop
 from mathbot.render import PNG_SIGNATURE
 
 log = logging.getLogger(__name__)
@@ -96,6 +97,7 @@ class AssetCache:
         self.client = client
         self.root = root
         self.ttl = ttl
+        self._pdfs: dict[str, bytes] = {}  # a few recently cropped PDFs, so a paper is read once
 
     def _fresh(self, row) -> Path | None:
         if row is None or row["status"] != "ok" or not row["local_path"]:
@@ -108,11 +110,17 @@ class AssetCache:
         return path
 
     def ensure(self, url: str) -> tuple[bytes, str]:
-        """Return ``(bytes, content type)`` for ``url``, downloading only when needed."""
+        """Return ``(bytes, content type)`` for ``url``, downloading only when needed.
+
+        A crop URL (``pdf.crop_url``) is made from its PDF instead of downloaded.
+        """
         row = self.repo.get_asset(url)
         path = self._fresh(row)
         if path is not None:
             return path.read_bytes(), row["content_type"]
+        crop = parse_crop_url(url)
+        if crop is not None:
+            return self._make_crop(url, crop)
         now = iso_utc()
         if self._recent_failure(row, now):
             # A recent failure is not retried on every render run; it is retried once the
@@ -161,6 +169,36 @@ class AssetCache:
             expires_at=expires_at,
         )
         return data, content_type
+
+    def _make_crop(self, url: str, crop: Crop) -> tuple[bytes, str]:
+        """Cut a problem's picture out of its PDF and cache it under the crop URL.
+
+        The PDF comes through the HTTP cache (ingestion fetched it moments or weeks ago). It
+        must be the very file the coordinates were measured on, or the crop could show the
+        wrong text: a changed PDF fails the render until the problem is ingested again.
+        Crops are kept until replaced, since they can always be made again.
+        """
+        data = self._pdfs.get(crop.pdf_url)
+        if data is None:
+            try:
+                data = self.client.get(crop.pdf_url).content
+            except RobotsDisallowedError as exc:
+                raise AssetError(f"{crop.pdf_url}: {exc}", retryable=True) from exc
+            except HttpError as exc:
+                raise AssetError(f"{crop.pdf_url}: {exc}", retryable=_is_temporary(exc)) from exc
+            if len(self._pdfs) >= 8:
+                self._pdfs.pop(next(iter(self._pdfs)))
+            self._pdfs[crop.pdf_url] = data
+        if pdf_digest(data) != crop.digest:
+            raise AssetError(
+                f"{crop.pdf_url} has changed since the problem was ingested (digest {pdf_digest(data)}, "
+                f"expected {crop.digest}); run refresh for this contest"
+            )
+        try:
+            png = render_crop(data, crop.page, crop.box)
+        except PdfLayoutError as exc:
+            raise AssetError(f"{url}: {exc}") from exc
+        return self.store(url, png, "image/png", expires=False)
 
     @staticmethod
     def _recent_failure(row, now: str) -> bool:

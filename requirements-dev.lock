@@ -91,6 +91,8 @@ propcache==0.5.4
     #   yarl
 pygments==2.21.0
     # via pytest
+pypdfium2==5.15.2
+    # via -r requirements.txt
 pytest==9.2.0
     # via -r requirements-dev.txt
 python-dateutil==2.9.0.post0

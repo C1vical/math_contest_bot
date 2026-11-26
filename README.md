@@ -8,8 +8,10 @@ collect, render and publish those problems.
 | [CEMC](https://cemc.uwaterloo.ca/resources/past-contests) | Euclid, Fryer, Galois, Hypatia, Pascal, Cayley, Fermat, CIMC, CSMC | 1,247 (with 1,247 official solutions and 825 answers) | Yes |
 | [AoPS Wiki](https://artofproblemsolving.com/wiki/) | AMC 8/10/12, AJHSME, AHSME, AIME, USAJMO, USAMO, IMO | 7,310 | No, AoPS blocks automated access |
 | [AoPS Community](https://artofproblemsolving.com/community/c3277) | CMO (CJMO and CMOQR optional) | 323 | No, AoPS blocks automated access |
+| [Canadian Mathematical Society](https://cms.math.ca/competitions/) | COMC (1998-2026), CLMC (2023-2026) | 408 (CLMC with answers) | Yes |
 
-Counts are from 2026-11-22, when all 8,880 problems had an image. The AoPS problems
+Counts are from 2026-11-22, when all 8,880 problems had an image; the CMS row is from
+2026-11-26. The AoPS problems
 come from the [pre-2.0 database](#importing-the-pre-20-database).
 
 ## Setup
@@ -178,11 +180,24 @@ Cloudflare R2.
 stays off until you set the repository variable `MATHBOT_REFRESH_ENABLED=true` and the
 secrets listed in that file. Publish the first snapshot yourself.
 
+### Problems from PDF papers
+
+The CMS publishes its papers only as PDFs. A problem from one is shown as a picture of its own
+region of the official PDF, so formulas and diagrams look exactly as printed; the PDF's text
+layer is kept only as plain text for search and the text fallback. Ingestion finds each
+problem's place on the page (see [mathbot/pdf.py](mathbot/pdf.py)) and stores coordinates;
+`render` cuts the picture from the PDF. A paper whose questions can't be located with
+certainty is reported and skipped, never stored with doubtful numbering: currently COMC
+1996 (its text layer is offset from the printed text) and COMC 1997 (its text layer is
+damaged). For COMC 2012-2016 and the CLMC, whose question booklets can't be read that way,
+the questions are taken from the official solutions, cut off where each solution begins.
+Rendering needs `pypdfium2` (in `requirements.lock`); the bot itself does not.
+
 ## Source access and attribution
 
 Problems remain the property of their publishers: the Mathematical Association of
-America (AMC, AIME, USAMO, USAJMO), the IMO, the Canadian Mathematical Society (CMO)
-and the CEMC at the University of Waterloo, with transcriptions by the Art of Problem
+America (AMC, AIME, USAMO, USAJMO), the IMO, the Canadian Mathematical Society (CMO,
+COMC, CLMC) and the CEMC at the University of Waterloo, with transcriptions by the Art of Problem
 Solving community. Every problem links to its source. Use this for study groups, not
 for republishing.
 
@@ -211,7 +226,8 @@ Never edit a database migration that has been applied; add a new one in
 ```
 mathbot/
   contests.py    contest registry and IDs (amc10a-2024-p05)
-  sources/       CEMC, AoPS Wiki and AoPS Community adapters
+  sources/       CEMC, CMS, AoPS Wiki and AoPS Community adapters
+  pdf.py         problems located in, and cut out of, PDF papers
   ingest.py      fetch, normalize and store problems
   http.py        rate-limited HTTP client
   db/            schema, migrations and queries

@@ -105,6 +105,8 @@ def contest_choices(
                 choices.append(app_commands.Choice(name=label[:MAX_LABEL_CHARS], value=family))
     listed = {choice.value for choice in choices}  # /random AIME means the family, so it is listed once
     for series in sorted(registry.all(), key=_is_retired):
+        if families and not needle and series.family in listed:
+            continue  # nothing typed yet: the group's entry stands for its members, which saves room
         if series.key not in listed and (not needle or _matches(series, needle)):
             label = series.key if normalize_alias(series.name) == series.key else f"{series.key} - {series.name}"
             choices.append(app_commands.Choice(name=label[:MAX_LABEL_CHARS], value=series.key))
